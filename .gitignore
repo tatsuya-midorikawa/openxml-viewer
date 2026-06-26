@@ -3,6 +3,13 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
 
+# Node / Fable / esbuild build artifacts
+node_modules/
+build/
+dist/
+fable_modules/
+*.vsix
+
 # User-specific files
 *.rsuser
 *.suo

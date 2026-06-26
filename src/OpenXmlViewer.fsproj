@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <WarningLevel>3</WarningLevel>
+    <!-- Fable がトランスパイルするため、.NET 側のビルド出力は生成しない -->
+    <DisableImplicitFSharpCoreReference>false</DisableImplicitFSharpCoreReference>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Core: フルスクラッチの ZIP / DEFLATE / XML -->
+    <Compile Include="Core/Inflate.fs" />
+    <Compile Include="Core/Zip.fs" />
+    <Compile Include="Core/Xml.fs" />
+    <Compile Include="Core/Opc.fs" />
+    <!-- 共有モデル -->
+    <Compile Include="Model.fs" />
+    <!-- 各形式パーサー -->
+    <Compile Include="Parsers/Spreadsheet.fs" />
+    <Compile Include="Parsers/Document.fs" />
+    <Compile Include="Parsers/Presentation.fs" />
+    <!-- VS Code 連携 / エントリーポイント -->
+    <Compile Include="Vscode.fs" />
+    <Compile Include="Extension.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Fable.Core" Version="4.3.0" />
+  </ItemGroup>
+
+</Project>

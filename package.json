@@ -1,0 +1,113 @@
+{
+  "name": "openxml-viewer",
+  "displayName": "OpenXML Viewer",
+  "description": "Office Open XML (.xlsx / .docx / .pptx) を VS Code 上で直接プレビューする読み取り専用ビューアー。",
+  "version": "0.1.0",
+  "publisher": "tatsuya-midorikawa",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tatsuya-midorikawa/openxml-viewer.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "openxml-viewer.spreadsheet",
+        "displayName": "OpenXML Viewer (Spreadsheet)",
+        "selector": [
+          {
+            "filenamePattern": "*.xlsx"
+          }
+        ],
+        "priority": "default"
+      },
+      {
+        "viewType": "openxml-viewer.document",
+        "displayName": "OpenXML Viewer (Document)",
+        "selector": [
+          {
+            "filenamePattern": "*.docx"
+          }
+        ],
+        "priority": "default"
+      },
+      {
+        "viewType": "openxml-viewer.presentation",
+        "displayName": "OpenXML Viewer (Presentation)",
+        "selector": [
+          {
+            "filenamePattern": "*.pptx"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "openxml-viewer.openPreview",
+        "title": "OpenXML Viewer: Open Preview"
+      },
+      {
+        "command": "openxml-viewer.reload",
+        "title": "OpenXML Viewer: Reload"
+      }
+    ],
+    "configuration": {
+      "title": "OpenXML Viewer",
+      "properties": {
+        "openxmlViewer.spreadsheet.maxRows": {
+          "type": "number",
+          "default": 1000,
+          "description": "スプレッドシートで一度に描画する最大行数。"
+        },
+        "openxmlViewer.spreadsheet.showGridlines": {
+          "type": "boolean",
+          "default": true,
+          "description": "セルのグリッド線を表示するか。"
+        },
+        "openxmlViewer.document.showImages": {
+          "type": "boolean",
+          "default": true,
+          "description": "Word 文書内の画像を表示するか。"
+        },
+        "openxmlViewer.presentation.thumbnails": {
+          "type": "boolean",
+          "default": true,
+          "description": "スライドのサムネイル一覧を表示するか。"
+        },
+        "openxmlViewer.theme": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "light",
+            "dark"
+          ],
+          "default": "auto",
+          "description": "プレビューの配色。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "fable": "dotnet fable src --outDir build",
+    "bundle": "esbuild build/Extension.js --bundle --platform=node --target=node18 --external:vscode --format=cjs --outfile=dist/extension.js",
+    "build": "npm run fable && npm run bundle",
+    "watch": "dotnet fable watch src --outDir build",
+    "clean": "dotnet fable clean src --outDir build --yes",
+    "package": "npm run build && vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.23.0"
+  }
+}
