@@ -88,46 +88,210 @@ let private rowHeightPx (defaultHeight: float) (rows: Row[]) (row: int) : float 
     |> Option.defaultValue defaultHeight
     |> rowHeightToPx
 
-/// <si> / <is> 要素のテキストを取り出す (phonetic <rPh> は除外)。
-let private richText (el: Xml.XmlElement) : string =
-    el
-    |> Xml.elementChildren
-    |> List.choose (fun e ->
-        match Xml.localName e.Name with
-        | "t" -> Some(Xml.innerText e)
-        | "r" -> Some(Xml.childrenByLocal "t" e |> List.map Xml.innerText |> String.concat "")
-        | _ -> None)
-    |> String.concat ""
+type private FontStyle =
+    { Bold: bool
+      Italic: bool
+      Underline: bool
+      Strike: bool
+      FontSize: float
+      FontName: string
+      Color: string }
+
+type private RawTextRun =
+    { Text: string
+      Bold: bool option
+      Italic: bool option
+      Underline: bool option
+      Strike: bool option
+      FontSize: float option
+      FontName: string option
+      Color: string option }
+
+type private RichTextValue = { Text: string; Runs: RawTextRun[] }
+
+let private defaultFont =
+    { Bold = false
+      Italic = false
+      Underline = false
+      Strike = false
+      FontSize = 11.0
+      FontName = ""
+      Color = "" }
+
+let private normalizeColor (value: string) : string =
+    let hex = if value.Length = 8 then value.Substring 2 else value
+    if hex.Length = 6 then "#" + hex else ""
+
+let private parseThemeColors (archive: Zip.ZipArchive) : Map<int, string> =
+    match Zip.tryReadBytes archive "xl/theme/theme1.xml" with
+    | None -> Map.empty
+    | Some bytes ->
+        let theme = Xml.parseBytes bytes
+        let names = [| "lt1"; "dk1"; "lt2"; "dk2"; "accent1"; "accent2"; "accent3"; "accent4"; "accent5"; "accent6"; "hlink"; "folHlink" |]
+        names
+        |> Array.mapi (fun i name ->
+            Xml.descendantsByLocal name theme
+            |> Seq.tryHead
+            |> Option.bind (fun color ->
+                Xml.tryChildByLocal "srgbClr" color
+                |> Option.bind (Xml.attrLocal "val")
+                |> Option.orElseWith (fun () -> Xml.tryChildByLocal "sysClr" color |> Option.bind (Xml.attrLocal "lastClr"))
+                |> Option.map normalizeColor)
+            |> Option.map (fun color -> i, color))
+        |> Array.choose id
+        |> Map.ofArray
+
+let private indexedColor (index: int) : string =
+    match index with
+    | 0 -> "#000000"
+    | 1 -> "#FFFFFF"
+    | 2 -> "#FF0000"
+    | 3 -> "#00FF00"
+    | 4 -> "#0000FF"
+    | 5 -> "#FFFF00"
+    | 6 -> "#FF00FF"
+    | 7 -> "#00FFFF"
+    | 8 -> "#000000"
+    | 9 -> "#FFFFFF"
+    | 10 -> "#FF0000"
+    | 11 -> "#00FF00"
+    | 12 -> "#0000FF"
+    | 13 -> "#FFFF00"
+    | 14 -> "#FF00FF"
+    | 15 -> "#00FFFF"
+    | _ -> ""
+
+let private parseColor (themeColors: Map<int, string>) (el: Xml.XmlElement) : string option =
+    Xml.tryChildByLocal "color" el
+    |> Option.bind (fun color ->
+        Xml.attrLocal "rgb" color
+        |> Option.map normalizeColor
+        |> Option.orElseWith (fun () ->
+            Xml.attrLocal "theme" color
+            |> Option.bind tryParseInt
+            |> Option.bind (fun theme -> Map.tryFind theme themeColors))
+        |> Option.orElseWith (fun () ->
+            Xml.attrLocal "indexed" color
+            |> Option.bind tryParseInt
+            |> Option.map indexedColor))
+    |> Option.filter (fun color -> color <> "")
+
+let private parseFont (themeColors: Map<int, string>) (font: Xml.XmlElement) : FontStyle =
+    { Bold = Xml.tryChildByLocal "b" font |> Option.isSome
+      Italic = Xml.tryChildByLocal "i" font |> Option.isSome
+      Underline = Xml.tryChildByLocal "u" font |> Option.isSome
+      Strike = Xml.tryChildByLocal "strike" font |> Option.isSome
+      FontSize = Xml.tryChildByLocal "sz" font |> Option.bind (attrFloat "val") |> Option.defaultValue defaultFont.FontSize
+      FontName = Xml.tryChildByLocal "name" font |> Option.bind (Xml.attrLocal "val") |> Option.defaultValue defaultFont.FontName
+      Color = parseColor themeColors font |> Option.defaultValue defaultFont.Color }
+
+let private parseStyleFonts (archive: Zip.ZipArchive) : FontStyle[] =
+    match Zip.tryReadBytes archive "xl/styles.xml" with
+    | None -> [| defaultFont |]
+    | Some bytes ->
+        let styles = Xml.parseBytes bytes
+        let themeColors = parseThemeColors archive
+        let fonts =
+            match Xml.tryChildByLocal "fonts" styles with
+            | Some fonts -> Xml.childrenByLocal "font" fonts |> List.map (parseFont themeColors) |> Array.ofList
+            | None -> [| defaultFont |]
+
+        match Xml.tryChildByLocal "cellXfs" styles with
+        | Some cellXfs ->
+            Xml.childrenByLocal "xf" cellXfs
+            |> List.map (fun xf ->
+                let fontId = attrInt "fontId" xf |> Option.defaultValue 0
+                if fontId >= 0 && fontId < fonts.Length then fonts.[fontId] else defaultFont)
+            |> Array.ofList
+        | None -> fonts
+
+let private rawTextRun text =
+    { Text = text
+      Bold = None
+      Italic = None
+      Underline = None
+      Strike = None
+      FontSize = None
+      FontName = None
+      Color = None }
+
+let private parseRunProperties (themeColors: Map<int, string>) (rPr: Xml.XmlElement option) : RawTextRun -> RawTextRun =
+    match rPr with
+    | None -> id
+    | Some rPr ->
+        fun run ->
+            { run with
+                Bold = if Xml.tryChildByLocal "b" rPr |> Option.isSome then Some true else run.Bold
+                Italic = if Xml.tryChildByLocal "i" rPr |> Option.isSome then Some true else run.Italic
+                Underline = if Xml.tryChildByLocal "u" rPr |> Option.isSome then Some true else run.Underline
+                Strike = if Xml.tryChildByLocal "strike" rPr |> Option.isSome then Some true else run.Strike
+                FontSize = Xml.tryChildByLocal "sz" rPr |> Option.bind (attrFloat "val") |> Option.orElse run.FontSize
+                FontName = Xml.tryChildByLocal "rFont" rPr |> Option.bind (Xml.attrLocal "val") |> Option.orElse run.FontName
+                Color = parseColor themeColors rPr |> Option.orElse run.Color }
+
+let private materializeRun (font: FontStyle) (run: RawTextRun) : TextRun =
+    { text = run.Text
+      bold = defaultArg run.Bold font.Bold
+      italic = defaultArg run.Italic font.Italic
+      underline = defaultArg run.Underline font.Underline
+      strike = defaultArg run.Strike font.Strike
+      fontSize = defaultArg run.FontSize font.FontSize
+      fontName = defaultArg run.FontName font.FontName
+      color = defaultArg run.Color font.Color }
+
+let private richText (themeColors: Map<int, string>) (el: Xml.XmlElement) : RichTextValue =
+    let runs =
+        el
+        |> Xml.elementChildren
+        |> List.choose (fun e ->
+            match Xml.localName e.Name with
+            | "t" -> Some(rawTextRun (Xml.innerText e))
+            | "r" ->
+                let text = Xml.childrenByLocal "t" e |> List.map Xml.innerText |> String.concat ""
+                Some(parseRunProperties themeColors (Xml.tryChildByLocal "rPr" e) (rawTextRun text))
+            | _ -> None)
+        |> Array.ofList
+
+    { Text = runs |> Array.map (fun r -> r.Text) |> String.concat ""
+      Runs = runs }
 
 /// 共有文字列テーブル (xl/sharedStrings.xml) を読み込む。
-let private parseSharedStrings (archive: Zip.ZipArchive) : string[] =
+let private parseSharedStrings (archive: Zip.ZipArchive) (themeColors: Map<int, string>) : RichTextValue[] =
     match Zip.tryReadBytes archive "xl/sharedStrings.xml" with
     | None -> [||]
     | Some bytes ->
         Xml.parseBytes bytes
         |> Xml.childrenByLocal "si"
-        |> List.map richText
+        |> List.map (richText themeColors)
         |> Array.ofList
 
 /// 1 つのセルを解析する。
-let private parseCell (shared: string[]) (c: Xml.XmlElement) : Cell =
+let private parseCell (shared: RichTextValue[]) (styleFonts: FontStyle[]) (themeColors: Map<int, string>) (c: Xml.XmlElement) : Cell =
     let col = Xml.attrLocal "r" c |> Option.map colFromRef |> Option.defaultValue 0
     let cellType = Xml.attrLocal "t" c |> Option.defaultValue "n"
-    let text =
+    let font =
+        Xml.attrLocal "s" c
+        |> Option.bind tryParseInt
+        |> Option.bind (fun i -> if i >= 0 && i < styleFonts.Length then Some styleFonts.[i] else None)
+        |> Option.defaultValue defaultFont
+    let value =
         match cellType with
         | "s" ->
             match Xml.tryChildByLocal "v" c |> Option.bind (Xml.innerText >> tryParseInt) with
             | Some i when i >= 0 && i < shared.Length -> shared.[i]
-            | _ -> ""
+            | _ -> { Text = ""; Runs = [||] }
         | "inlineStr" ->
             match Xml.tryChildByLocal "is" c with
-            | Some is -> richText is
-            | None -> ""
+            | Some is -> richText themeColors is
+            | None -> { Text = ""; Runs = [||] }
         | _ ->
             match Xml.tryChildByLocal "v" c with
-            | Some v -> Xml.innerText v
-            | None -> ""
-    { col = col; text = text }
+            | Some v -> { Text = Xml.innerText v; Runs = [||] }
+            | None -> { Text = ""; Runs = [||] }
+    let runs =
+        if value.Runs.Length = 0 && value.Text <> "" then [| materializeRun font (rawTextRun value.Text) |]
+        else value.Runs |> Array.map (materializeRun font)
+    { col = col; text = value.Text; runs = runs }
 
 /// ワークシートの既定寸法を解析する。
 let private parseSheetDefaults (root: Xml.XmlElement) : float * float =
@@ -162,7 +326,7 @@ let private parseColumns (root: Xml.XmlElement) : Column[] =
         |> Array.ofList
 
 /// ワークシート XML の行配列を解析する。
-let private parseRows (shared: string[]) (root: Xml.XmlElement) : Row[] =
+let private parseRows (shared: RichTextValue[]) (styleFonts: FontStyle[]) (themeColors: Map<int, string>) (root: Xml.XmlElement) : Row[] =
     match Xml.tryChildByLocal "sheetData" root with
     | None -> [||]
     | Some sheetData ->
@@ -172,7 +336,7 @@ let private parseRows (shared: string[]) (root: Xml.XmlElement) : Row[] =
             let height = attrFloat "ht" row |> Option.defaultValue 0.0
             let cells =
                 Xml.childrenByLocal "c" row
-                |> List.map (parseCell shared)
+                |> List.map (parseCell shared styleFonts themeColors)
                 |> Array.ofList
             { index = idx; height = height; cells = cells })
         |> Array.ofList
@@ -298,7 +462,9 @@ let private parseImages defaultColumnWidth defaultRowHeight (columns: Column[]) 
 /// .xlsx バイト列を解析する。
 let parse (data: byte[]) : SpreadsheetData =
     let archive = Zip.read data
-    let shared = parseSharedStrings archive
+    let themeColors = parseThemeColors archive
+    let styleFonts = parseStyleFonts archive
+    let shared = parseSharedStrings archive themeColors
     let rels = Opc.loadRels archive "xl/workbook.xml"
 
     match Zip.tryReadBytes archive "xl/workbook.xml" with
@@ -325,7 +491,7 @@ let parse (data: byte[]) : SpreadsheetData =
                         let defaultColumnWidth, defaultRowHeight = parseSheetDefaults sheetRoot
                         let showGridLines = parseShowGridLines sheetRoot
                         let columns = parseColumns sheetRoot
-                        let rows = parseRows shared sheetRoot
+                        let rows = parseRows shared styleFonts themeColors sheetRoot
                         let images = parseImages defaultColumnWidth defaultRowHeight columns rows archive sheetPath sheetRoot
                         let maxCol =
                             let cellCols = rows |> Array.collect (fun r -> r.cells |> Array.map (fun c -> c.col))

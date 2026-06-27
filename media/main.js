@@ -86,6 +86,33 @@
     return cell && cell.text !== undefined && cell.text !== null && String(cell.text) !== "";
   }
 
+  function applyRunStyle(node, run) {
+    if (run.bold) node.style.fontWeight = "700";
+    if (run.italic) node.style.fontStyle = "italic";
+    const decorations = [];
+    if (run.underline) decorations.push("underline");
+    if (run.strike) decorations.push("line-through");
+    if (decorations.length > 0) node.style.textDecorationLine = decorations.join(" ");
+    if (run.fontSize > 0) node.style.fontSize = `${run.fontSize}pt`;
+    if (run.fontName) node.style.fontFamily = run.fontName;
+    if (run.color) node.style.color = run.color;
+  }
+
+  function appendCellText(container, cell) {
+    const runs = cell.runs || [];
+    if (runs.length === 0) {
+      container.textContent = cell.text || "";
+      return;
+    }
+
+    runs.forEach((run) => {
+      if (!run || run.text === undefined || run.text === null) return;
+      const span = el("span", "text-run", String(run.text));
+      applyRunStyle(span, run);
+      container.appendChild(span);
+    });
+  }
+
   function spillWidth(metrics, occupiedCols, col, maxCol) {
     let stopCol = maxCol + 1;
     for (const occupiedCol of occupiedCols) {
@@ -181,7 +208,7 @@
       const occupiedCols = [];
       (row.cells || []).forEach((cell) => {
         if (hasCellText(cell)) {
-          cellByCol[cell.col] = String(cell.text);
+          cellByCol[cell.col] = cell;
           occupiedCols.push(cell.col);
         }
       });
@@ -190,10 +217,12 @@
         const td = el("td", "cell");
         td.dataset.row = String(row.index);
         td.dataset.col = String(c);
-        if (cellByCol[c] !== undefined) {
-          const text = el("span", "cell-text", cellByCol[c]);
+        const cell = cellByCol[c];
+        if (cell !== undefined) {
+          const text = el("span", "cell-text");
           text.style.width = px(spillWidth(metrics, occupiedCols, c, maxCol));
-          td.title = cellByCol[c];
+          appendCellText(text, cell);
+          td.title = String(cell.text);
           td.classList.add("has-value");
           td.appendChild(text);
         }

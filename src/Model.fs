@@ -6,8 +6,22 @@ module OpenXmlViewer.Model
 // スプレッドシート (.xlsx)
 // ---------------------------------------------------------------------------
 
+/// セル内の文字列 run。
+type TextRun =
+    { text: string
+      bold: bool
+      italic: bool
+      underline: bool
+      strike: bool
+      fontSize: float
+      fontName: string
+      color: string }
+
 /// セル。col は 0 始まりの列番号。
-type Cell = { col: int; text: string }
+type Cell =
+    { col: int
+      text: string
+      runs: TextRun[] }
 
 /// 行。index は 1 始まりの行番号。
 type Row =

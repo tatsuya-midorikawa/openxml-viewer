@@ -111,6 +111,10 @@ table.grid.hide-gridlines td {
   transform: translateY(-50%);
 }
 
+.text-run {
+  white-space: pre;
+}
+
 table.grid th.col-head,
 table.grid th.row-head,
 table.grid th.corner {
