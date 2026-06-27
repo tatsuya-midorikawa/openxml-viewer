@@ -555,3 +555,6 @@ vite.config.ts.timestamp-*
 .DS_Store
 *.pdf
 .sample
+*.xlsx
+*.docs
+*.pptx
