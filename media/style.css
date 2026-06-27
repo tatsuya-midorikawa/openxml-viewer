@@ -63,19 +63,46 @@ body {
   overflow: auto;
 }
 
+.sheet-canvas {
+  position: relative;
+  display: inline-block;
+  min-width: 100%;
+}
+
 table.grid {
   border-collapse: collapse;
   font-variant-numeric: tabular-nums;
+  table-layout: fixed;
 }
 
 table.grid th,
 table.grid td {
+  box-sizing: border-box;
   border: 1px solid var(--vscode-panel-border);
-  padding: 2px 6px;
+  padding: 0 6px;
   white-space: nowrap;
-  max-width: 320px;
+}
+
+table.grid th {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+table.grid td {
+  position: relative;
+  overflow: visible;
+}
+
+.cell-text {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  display: block;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+  line-height: normal;
+  transform: translateY(-50%);
 }
 
 table.grid th.col-head,
@@ -86,6 +113,7 @@ table.grid th.corner {
   color: var(--vscode-descriptionForeground);
   text-align: center;
   font-weight: 600;
+  z-index: 3;
 }
 
 table.grid th.col-head,
@@ -96,6 +124,23 @@ table.grid th.corner {
 table.grid th.row-head,
 table.grid th.corner {
   left: 0;
+}
+
+table.grid th.corner {
+  z-index: 4;
+}
+
+.sheet-images {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.sheet-image {
+  position: absolute;
+  object-fit: contain;
+  pointer-events: auto;
 }
 
 .truncation {

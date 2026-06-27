@@ -10,13 +10,40 @@ module OpenXmlViewer.Model
 type Cell = { col: int; text: string }
 
 /// 行。index は 1 始まりの行番号。
-type Row = { index: int; cells: Cell[] }
+type Row =
+    { index: int
+      height: float
+      cells: Cell[] }
+
+/// 列幅。min/max は 0 始まりの列番号。
+type Column =
+    { min: int
+      max: int
+      width: float }
+
+/// ワークシート上に配置された画像。
+type SheetImage =
+    { col: int
+      row: int
+      colOffset: float
+      rowOffset: float
+      toCol: int
+      toRow: int
+      width: float
+      height: float
+      altText: string
+      contentType: string
+      data: string }
 
 /// ワークシート。
 type Sheet =
     { name: string
       rows: Row[]
-      maxCol: int }
+      columns: Column[]
+      images: SheetImage[]
+      maxCol: int
+      defaultColWidth: float
+      defaultRowHeight: float }
 
 /// スプレッドシート全体。
 type SpreadsheetData = { kind: string; sheets: Sheet[] }

@@ -29,9 +29,74 @@
     while (node.firstChild) node.removeChild(node.firstChild);
   }
 
+  function px(value) {
+    return `${Math.max(1, Math.round(value * 100) / 100)}px`;
+  }
+
   // -------------------------------------------------------------------------
   // スプレッドシート
   // -------------------------------------------------------------------------
+  const ROW_HEADER_WIDTH = 48;
+  const COLUMN_HEADER_HEIGHT = 24;
+  const DEFAULT_COL_WIDTH = 8.43;
+  const DEFAULT_ROW_HEIGHT = 15;
+  const CELL_TEXT_PADDING = 6;
+  const TRAILING_BLANK_COLUMNS = 20;
+
+  function columnWidthToPx(width) {
+    return Math.floor(width * 7 + 5);
+  }
+
+  function rowHeightToPx(height) {
+    return height * 96 / 72;
+  }
+
+  function columnWidth(sheet, col) {
+    const columns = sheet.columns || [];
+    const column = columns.find((c) => c.min <= col && col <= c.max);
+    return columnWidthToPx(column ? column.width : (sheet.defaultColWidth || DEFAULT_COL_WIDTH));
+  }
+
+  function rowHeight(sheet, rowNumber, rowByIndex) {
+    const row = rowByIndex[rowNumber];
+    return rowHeightToPx(row && row.height > 0 ? row.height : (sheet.defaultRowHeight || DEFAULT_ROW_HEIGHT));
+  }
+
+  function buildSheetMetrics(sheet, maxCol, maxRow, rowByIndex) {
+    const colWidths = [];
+    const colOffsets = [0];
+    for (let c = 0; c <= maxCol; c++) {
+      const width = columnWidth(sheet, c);
+      colWidths.push(width);
+      colOffsets.push(colOffsets[c] + width);
+    }
+
+    const rowHeights = [];
+    const rowOffsets = [0];
+    for (let r = 1; r <= maxRow; r++) {
+      const height = rowHeight(sheet, r, rowByIndex);
+      rowHeights.push(height);
+      rowOffsets.push(rowOffsets[r - 1] + height);
+    }
+
+    return { colWidths, colOffsets, rowHeights, rowOffsets };
+  }
+
+  function hasCellText(cell) {
+    return cell && cell.text !== undefined && cell.text !== null && String(cell.text) !== "";
+  }
+
+  function spillWidth(metrics, occupiedCols, col, maxCol) {
+    let stopCol = maxCol + 1;
+    for (const occupiedCol of occupiedCols) {
+      if (occupiedCol > col) {
+        stopCol = occupiedCol;
+        break;
+      }
+    }
+    return Math.max(1, metrics.colOffsets[stopCol] - metrics.colOffsets[col] - CELL_TEXT_PADDING);
+  }
+
   function renderSpreadsheet(data) {
     clear(app);
     app.className = "spreadsheet";
@@ -65,11 +130,39 @@
   }
 
   function buildSheetTable(sheet) {
-    const maxCol = sheet.maxCol || 0;
+    const rows = sheet.rows || [];
+    const images = sheet.images || [];
+    const contentMaxCol = Math.max(sheet.maxCol || 0, ...images.map((image) => Math.max(image.col || 0, image.toCol || 0)));
+    const maxCol = Math.min(16383, contentMaxCol + TRAILING_BLANK_COLUMNS);
+    const rowByIndex = {};
+    rows.forEach((row) => {
+      rowByIndex[row.index] = row;
+    });
+
+    const maxDataRow = rows.reduce((max, row) => Math.max(max, row.index || 0), 0);
+    const maxImageRow = images.reduce((max, image) => Math.max(max, (image.row || 0) + 1, (image.toRow || 0) + 1), 0);
+    const maxRow = Math.max(maxDataRow, maxImageRow, 1);
+    const limit = Math.min(maxRow, 2000);
+    const metrics = buildSheetMetrics(sheet, maxCol, limit, rowByIndex);
+    const sheetWidth = ROW_HEADER_WIDTH + metrics.colOffsets[metrics.colOffsets.length - 1];
+    const sheetHeight = COLUMN_HEADER_HEIGHT + metrics.rowOffsets[metrics.rowOffsets.length - 1];
+
     const table = el("table", "grid");
+    table.style.width = px(sheetWidth);
+    const colgroup = el("colgroup");
+    const rowHeaderCol = el("col");
+    rowHeaderCol.style.width = px(ROW_HEADER_WIDTH);
+    colgroup.appendChild(rowHeaderCol);
+    metrics.colWidths.forEach((width) => {
+      const col = el("col");
+      col.style.width = px(width);
+      colgroup.appendChild(col);
+    });
+    table.appendChild(colgroup);
 
     const thead = el("thead");
     const headRow = el("tr");
+    headRow.style.height = px(COLUMN_HEADER_HEIGHT);
     headRow.appendChild(el("th", "corner", ""));
     for (let c = 0; c <= maxCol; c++) {
       headRow.appendChild(el("th", "col-head", colLetter(c)));
@@ -78,29 +171,64 @@
     table.appendChild(thead);
 
     const tbody = el("tbody");
-    const rows = sheet.rows || [];
-    const limit = Math.min(rows.length, 2000);
-    for (let r = 0; r < limit; r++) {
-      const row = rows[r];
+    for (let rowNumber = 1; rowNumber <= limit; rowNumber++) {
+      const row = rowByIndex[rowNumber] || { index: rowNumber, cells: [] };
       const tr = el("tr");
+      tr.style.height = px(metrics.rowHeights[rowNumber - 1]);
       tr.appendChild(el("th", "row-head", String(row.index)));
       const cellByCol = {};
+      const occupiedCols = [];
       (row.cells || []).forEach((cell) => {
-        cellByCol[cell.col] = cell.text;
+        if (hasCellText(cell)) {
+          cellByCol[cell.col] = String(cell.text);
+          occupiedCols.push(cell.col);
+        }
       });
+      occupiedCols.sort((a, b) => a - b);
       for (let c = 0; c <= maxCol; c++) {
-        tr.appendChild(el("td", "cell", cellByCol[c] !== undefined ? cellByCol[c] : ""));
+        const td = el("td", "cell");
+        td.dataset.row = String(row.index);
+        td.dataset.col = String(c);
+        if (cellByCol[c] !== undefined) {
+          const text = el("span", "cell-text", cellByCol[c]);
+          text.style.width = px(spillWidth(metrics, occupiedCols, c, maxCol));
+          td.title = cellByCol[c];
+          td.classList.add("has-value");
+          td.appendChild(text);
+        }
+        tr.appendChild(td);
       }
       tbody.appendChild(tr);
     }
     table.appendChild(tbody);
 
     const wrap = el("div", "table-wrap");
-    wrap.appendChild(table);
-    if (rows.length > limit) {
-      wrap.appendChild(el("div", "truncation", `先頭 ${limit} 行のみ表示しています (全 ${rows.length} 行)。`));
+    const canvas = el("div", "sheet-canvas");
+    canvas.style.width = px(sheetWidth);
+    canvas.style.height = px(sheetHeight);
+    canvas.appendChild(table);
+    canvas.appendChild(buildImageLayer(images, metrics, limit));
+    wrap.appendChild(canvas);
+    if (maxRow > limit) {
+      wrap.appendChild(el("div", "truncation", `先頭 ${limit} 行のみ表示しています (全 ${maxRow} 行)。`));
     }
     return wrap;
+  }
+
+  function buildImageLayer(images, metrics, renderedRows) {
+    const layer = el("div", "sheet-images");
+    images.forEach((image) => {
+      if (image.row >= renderedRows || image.col < 0 || image.col >= metrics.colOffsets.length) return;
+      const img = el("img", "sheet-image");
+      img.alt = image.altText || "";
+      img.src = `data:${image.contentType};base64,${image.data}`;
+      img.style.left = px(ROW_HEADER_WIDTH + metrics.colOffsets[image.col] + (image.colOffset || 0));
+      img.style.top = px(COLUMN_HEADER_HEIGHT + metrics.rowOffsets[image.row] + (image.rowOffset || 0));
+      if (image.width > 0) img.style.width = px(image.width);
+      if (image.height > 0) img.style.height = px(image.height);
+      layer.appendChild(img);
+    });
+    return layer;
   }
 
   // -------------------------------------------------------------------------
