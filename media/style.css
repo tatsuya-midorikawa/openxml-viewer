@@ -32,7 +32,8 @@ body {
   flex-wrap: wrap;
   gap: 2px;
   padding: 4px 8px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  flex: 0 0 auto;
+  border-top: 1px solid var(--vscode-panel-border);
   background-color: var(--vscode-editorGroupHeader-tabsBackground);
 }
 
@@ -42,7 +43,7 @@ body {
   cursor: pointer;
   color: var(--vscode-foreground);
   background-color: transparent;
-  border-radius: 4px 4px 0 0;
+  border-radius: 0 0 4px 4px;
 }
 
 .tab:hover {
@@ -51,11 +52,12 @@ body {
 
 .tab.active {
   background-color: var(--vscode-tab-activeBackground);
-  border-bottom: 2px solid var(--vscode-focusBorder);
+  border-top: 2px solid var(--vscode-focusBorder);
 }
 
 .sheet-body {
   flex: 1;
+  min-height: 0;
   overflow: auto;
 }
 

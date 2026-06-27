@@ -109,8 +109,8 @@
 
     const tabs = el("div", "tabs");
     const body = el("div", "sheet-body");
-    app.appendChild(tabs);
     app.appendChild(body);
+    app.appendChild(tabs);
 
     function showSheet(index) {
       Array.from(tabs.children).forEach((t, i) =>
