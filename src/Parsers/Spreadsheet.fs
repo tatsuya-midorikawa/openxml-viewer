@@ -138,6 +138,14 @@ let private parseSheetDefaults (root: Xml.XmlElement) : float * float =
         colWidth, rowHeight
     | None -> defaultColWidth, defaultRowHeight
 
+/// シートビューのグリッド線表示設定を解析する。未指定の場合は Excel の既定どおり表示する。
+let private parseShowGridLines (root: Xml.XmlElement) : bool =
+    Xml.tryChildByLocal "sheetViews" root
+    |> Option.bind (Xml.tryChildByLocal "sheetView")
+    |> Option.bind (Xml.attrLocal "showGridLines")
+    |> Option.map (fun v -> v <> "0" && v.ToLower() <> "false")
+    |> Option.defaultValue true
+
 /// <cols> の列幅定義を解析する。
 let private parseColumns (root: Xml.XmlElement) : Column[] =
     match Xml.tryChildByLocal "cols" root with
@@ -315,6 +323,7 @@ let parse (data: byte[]) : SpreadsheetData =
                         | Some sheetBytes ->
                         let sheetRoot = Xml.parseBytes sheetBytes
                         let defaultColumnWidth, defaultRowHeight = parseSheetDefaults sheetRoot
+                        let showGridLines = parseShowGridLines sheetRoot
                         let columns = parseColumns sheetRoot
                         let rows = parseRows shared sheetRoot
                         let images = parseImages defaultColumnWidth defaultRowHeight columns rows archive sheetPath sheetRoot
@@ -329,6 +338,7 @@ let parse (data: byte[]) : SpreadsheetData =
                               columns = columns
                               images = images
                               maxCol = maxCol
+                              showGridLines = showGridLines
                               defaultColWidth = defaultColumnWidth
                               defaultRowHeight = defaultRowHeight }
                     | None -> None)

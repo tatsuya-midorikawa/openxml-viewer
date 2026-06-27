@@ -148,6 +148,7 @@
     const sheetHeight = COLUMN_HEADER_HEIGHT + metrics.rowOffsets[metrics.rowOffsets.length - 1];
 
     const table = el("table", "grid");
+    table.classList.toggle("hide-gridlines", sheet.showGridLines === false);
     table.style.width = px(sheetWidth);
     const colgroup = el("colgroup");
     const rowHeaderCol = el("col");

@@ -42,6 +42,7 @@ type Sheet =
       columns: Column[]
       images: SheetImage[]
       maxCol: int
+      showGridLines: bool
       defaultColWidth: float
       defaultRowHeight: float }
 

@@ -95,6 +95,10 @@ table.grid td {
   overflow: visible;
 }
 
+table.grid.hide-gridlines td {
+  border-color: transparent;
+}
+
 .cell-text {
   position: absolute;
   top: 50%;
