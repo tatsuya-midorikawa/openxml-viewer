@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <WarningLevel>3</WarningLevel>
     <!-- Fable がトランスパイルするため、.NET 側のビルド出力は生成しない -->
@@ -11,6 +11,7 @@
   <ItemGroup>
     <!-- Core: フルスクラッチの ZIP / DEFLATE / XML -->
     <Compile Include="Core/Inflate.fs" />
+    <Compile Include="Core/Text.fs" />
     <Compile Include="Core/Zip.fs" />
     <Compile Include="Core/Xml.fs" />
     <Compile Include="Core/Opc.fs" />
@@ -26,7 +27,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Fable.Core" Version="4.3.0" />
+    <PackageReference Include="Fable.Core" Version="5.1.0" />
   </ItemGroup>
 
 </Project>

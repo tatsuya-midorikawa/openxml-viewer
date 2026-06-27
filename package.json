@@ -98,10 +98,10 @@
     }
   },
   "scripts": {
-    "fable": "dotnet fable src --outDir build",
+    "fable": "dotnet fable src --outDir build --test:MSBuildCracker",
     "bundle": "esbuild build/Extension.js --bundle --platform=node --target=node18 --external:vscode --format=cjs --outfile=dist/extension.js",
     "build": "npm run fable && npm run bundle",
-    "watch": "dotnet fable watch src --outDir build",
+    "watch": "dotnet fable watch src --outDir build --test:MSBuildCracker",
     "clean": "dotnet fable clean src --outDir build --yes",
     "package": "npm run build && vsce package"
   },
