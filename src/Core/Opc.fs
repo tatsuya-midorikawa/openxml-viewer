@@ -72,3 +72,40 @@ let partByRelType (archive: Zip.ZipArchive) (relTypeSuffix: string) : string opt
 /// メイン文書パート (officeDocument リレーションシップのターゲット) を解決する。
 let officeDocumentPath (archive: Zip.ZipArchive) : string option =
     partByRelType archive "/officeDocument"
+
+/// [Content_Types].xml の既定 (拡張子) と上書き (パート名) を保持する。
+type ContentTypes =
+    { Defaults: Map<string, string>
+      Overrides: Map<string, string> }
+
+/// パッケージの [Content_Types].xml を読み込む。
+let loadContentTypes (archive: Zip.ZipArchive) : ContentTypes =
+    match Zip.tryReadBytes archive "[Content_Types].xml" with
+    | None -> { Defaults = Map.empty; Overrides = Map.empty }
+    | Some bytes ->
+        let root = Xml.parseBytes bytes
+        let defaults =
+            Xml.childrenByLocal "Default" root
+            |> List.choose (fun e ->
+                match Xml.attrLocal "Extension" e, Xml.attrLocal "ContentType" e with
+                | Some ext, Some ct -> Some(ext.ToLower(), ct)
+                | _ -> None)
+            |> Map.ofList
+        let overrides =
+            Xml.childrenByLocal "Override" root
+            |> List.choose (fun e ->
+                match Xml.attrLocal "PartName" e, Xml.attrLocal "ContentType" e with
+                | Some pn, Some ct -> Some(pn, ct)
+                | _ -> None)
+            |> Map.ofList
+        { Defaults = defaults; Overrides = overrides }
+
+/// パートのコンテンツタイプを解決する (Override 優先、なければ拡張子の Default)。
+let contentTypeOf (ct: ContentTypes) (partPath: string) : string option =
+    match Map.tryFind ("/" + partPath) ct.Overrides with
+    | Some t -> Some t
+    | None ->
+        let ext =
+            let i = partPath.LastIndexOf('.')
+            if i < 0 then "" else partPath.Substring(i + 1).ToLower()
+        Map.tryFind ext ct.Defaults

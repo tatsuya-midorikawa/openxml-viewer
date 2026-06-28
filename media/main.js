@@ -312,12 +312,23 @@
         appendDocRuns(h, block);
         page.appendChild(h);
       } else if (block.kind === "table") {
-        page.appendChild(buildDocTable(block.rows || []));
+        page.appendChild(buildDocTable(block));
+      } else if (block.kind === "image") {
+        const img = el("img", "doc-image");
+        img.src = `data:${block.contentType};base64,${block.imageData}`;
+        if (block.imageWidth > 0) img.style.width = px(block.imageWidth);
+        if (block.imageHeight > 0) img.style.height = px(block.imageHeight);
+        page.appendChild(img);
       } else {
         const p = el("p", "para");
         if (block.align) p.style.textAlign = block.align;
+        if (block.bullet) {
+          p.classList.add("list-item");
+          p.style.marginLeft = px(24 * ((block.listLevel || 0) + 1));
+          p.appendChild(el("span", "list-marker", block.bullet + " "));
+        }
         appendDocRuns(p, block);
-        if (!block.text) p.classList.add("empty-para");
+        if (!block.text && !block.bullet) p.classList.add("empty-para");
         page.appendChild(p);
       }
     });
@@ -344,17 +355,26 @@
     });
   }
 
-  function buildDocTable(rows) {
+  function buildDocTable(block) {
     const table = el("table", "doc-table");
-    rows.forEach((cells) => {
+    if (block.hasBorders) table.classList.add("bordered");
+    const colOwner = {};
+    (block.cells || []).forEach((row) => {
       const tr = el("tr");
-      cells.forEach((text) => {
+      let col = 0;
+      (row || []).forEach((cell) => {
+        const span = Math.max(1, cell.gridSpan || 1);
+        if (cell.vMergeContinue && colOwner[col]) {
+          colOwner[col].rowSpan = (colOwner[col].rowSpan || 1) + 1;
+          col += span;
+          return;
+        }
         const td = el("td");
-        text.split("\n").forEach((line, i) => {
-          if (i > 0) td.appendChild(document.createElement("br"));
-          td.appendChild(document.createTextNode(line));
-        });
+        if (span > 1) td.colSpan = span;
+        appendDocRuns(td, cell);
         tr.appendChild(td);
+        colOwner[col] = td;
+        col += span;
       });
       table.appendChild(tr);
     });
@@ -403,7 +423,7 @@
     const slideWidth = slide.width || 12192000;
     const slideHeight = slide.height || 6858000;
     card.style.aspectRatio = `${slideWidth} / ${slideHeight}`;
-    if (slide.backgroundColor) card.style.backgroundColor = slide.backgroundColor;
+    applyFillStyle(card, slide.backgroundColor);
 
     (slide.shapes || []).forEach((shape) => {
       const node = el("div", "slide-shape");
@@ -457,12 +477,27 @@
       return;
     }
     node.classList.toggle("slide-shape-ellipse", t.includes("ellipse") && !isCallout);
-    if (item.fillColor) node.style.backgroundColor = item.fillColor;
+    applyFillStyle(node, item.fillColor);
     if (item.lineColor) {
       node.style.borderColor = item.lineColor;
       node.style.borderStyle = "solid";
       node.style.borderWidth = `${pointToSlidePx(item.lineWidth || 1) / emuToSlidePx(slideWidth) * 100}cqw`;
     }
+  }
+
+  // 塗り値 (色 / グラデーション / 画像 url) を適切な CSS プロパティへ割り当てる。
+  function applyFillStyle(node, value) {
+    if (!value) return;
+    if (value[0] === "#") node.style.backgroundColor = value;
+    else node.style.background = value;
+  }
+
+  // SVG の fill 属性用に塗り値を解決する (グラデーション文字列からは最初の色を抽出)。
+  function svgFill(value) {
+    if (!value) return "transparent";
+    if (value[0] === "#") return value;
+    const m = value.match(/#[0-9a-fA-F]{6}/);
+    return m ? m[0] : "#cccccc";
   }
 
   // wedgeEllipseCallout を ECMA-376 の幾何 (楕円 + しっぽ) に従って SVG で描画する。
@@ -490,7 +525,7 @@
     svg.setAttribute("preserveAspectRatio", "none");
     const path = document.createElementNS(ns, "path");
     path.setAttribute("d", d);
-    path.setAttribute("fill", item.fillColor || "transparent");
+    path.setAttribute("fill", svgFill(item.fillColor));
     if (item.lineColor) {
       path.setAttribute("stroke", item.lineColor);
       path.setAttribute("stroke-width", String((item.lineWidth > 0 ? item.lineWidth : 1) * 1270000 / w));

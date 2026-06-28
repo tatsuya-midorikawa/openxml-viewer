@@ -205,9 +205,30 @@ table.doc-table {
 }
 
 table.doc-table td {
-  border: 1px solid var(--vscode-panel-border);
   padding: 4px 8px;
   vertical-align: top;
+}
+
+table.doc-table.bordered td {
+  border: 1px solid var(--vscode-panel-border, #c8c8c8);
+}
+
+.page .doc-image {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0.6em 0;
+}
+
+.page .list-item {
+  margin: 0.3em 0;
+  padding-left: 1.6em;
+  text-indent: -1.6em;
+}
+
+.list-marker {
+  display: inline-block;
+  min-width: 1.2em;
 }
 
 /* ---------------- プレゼンテーション (PowerPoint) ---------------- */

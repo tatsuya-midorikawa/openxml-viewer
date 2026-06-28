@@ -71,8 +71,15 @@ type SpreadsheetData = { kind: string; sheets: Sheet[] }
 // 文書 (.docx)
 // ---------------------------------------------------------------------------
 
-/// 文書ブロック。kind により段落/見出し/表を区別する。
-/// kind = "paragraph" | "heading" | "table"
+/// 文書の表セル。
+type DocCell =
+    { text: string
+      runs: TextRun[]
+      gridSpan: int
+      vMergeContinue: bool }
+
+/// 文書ブロック。kind により段落/見出し/表/画像を区別する。
+/// kind = "paragraph" | "heading" | "table" | "image"
 type Block =
     { kind: string
       style: string
@@ -80,7 +87,14 @@ type Block =
       text: string
       runs: TextRun[]
       align: string
-      rows: string[][] }
+      bullet: string
+      listLevel: int
+      cells: DocCell[][]
+      hasBorders: bool
+      imageData: string
+      contentType: string
+      imageWidth: float
+      imageHeight: float }
 
 /// 文書全体。
 type DocumentData = { kind: string; blocks: Block[] }

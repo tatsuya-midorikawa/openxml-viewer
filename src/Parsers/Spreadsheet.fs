@@ -681,9 +681,13 @@ let private contentType (path: string) : string option =
     elif lower.EndsWith ".svg" || lower.EndsWith ".svgz" then Some "image/svg+xml"
     else None
 
-let private imageData (archive: Zip.ZipArchive) (path: string) : (string * string) option =
-    match contentType path, Zip.tryReadBytes archive path with
-    | Some mime, Some bytes -> Some(mime, System.Convert.ToBase64String bytes)
+let private imageData (ct: Opc.ContentTypes) (archive: Zip.ZipArchive) (path: string) : (string * string) option =
+    let mime =
+        Opc.contentTypeOf ct path
+        |> Option.filter (fun t -> t.StartsWith "image/")
+        |> Option.orElseWith (fun () -> contentType path)
+    match mime, Zip.tryReadBytes archive path with
+    | Some m, Some bytes -> Some(m, System.Convert.ToBase64String bytes)
     | _ -> None
 
 let private altText (anchor: Xml.XmlElement) : string =
@@ -713,7 +717,7 @@ let private imageSize defaultColumnWidth defaultRowHeight columns rows fromMarke
             max 1.0 width, max 1.0 height
         | _ -> 0.0, 0.0
 
-let private parseImage defaultColumnWidth defaultRowHeight (columns: Column[]) (rows: Row[]) (archive: Zip.ZipArchive) (drawingPath: string) (rels: Map<string, Opc.Relationship>) (anchor: Xml.XmlElement) : SheetImage option =
+let private parseImage (ct: Opc.ContentTypes) defaultColumnWidth defaultRowHeight (columns: Column[]) (rows: Row[]) (archive: Zip.ZipArchive) (drawingPath: string) (rels: Map<string, Opc.Relationship>) (anchor: Xml.XmlElement) : SheetImage option =
     let rid = Xml.descendantsByLocal "blip" anchor |> Seq.tryPick (Xml.attrLocal "embed")
     let fromMarker = parseMarker "from" anchor
     match rid, fromMarker with
@@ -721,7 +725,7 @@ let private parseImage defaultColumnWidth defaultRowHeight (columns: Column[]) (
         match Map.tryFind rid rels with
         | Some rel when rel.TargetMode <> "External" ->
             let target = Opc.resolveTarget drawingPath rel.Target
-            match imageData archive target with
+            match imageData ct archive target with
             | Some(mime, data) ->
                 let toMarker = parseMarker "to" anchor
                 let ext = Xml.tryChildByLocal "ext" anchor
@@ -744,7 +748,7 @@ let private parseImage defaultColumnWidth defaultRowHeight (columns: Column[]) (
         | _ -> None
     | _ -> None
 
-let private parseImages defaultColumnWidth defaultRowHeight (columns: Column[]) (rows: Row[]) (archive: Zip.ZipArchive) (sheetPath: string) (root: Xml.XmlElement) : SheetImage[] =
+let private parseImages (ct: Opc.ContentTypes) defaultColumnWidth defaultRowHeight (columns: Column[]) (rows: Row[]) (archive: Zip.ZipArchive) (sheetPath: string) (root: Xml.XmlElement) : SheetImage[] =
     let sheetRels = Opc.loadRels archive sheetPath
     let drawingIds = Xml.descendantsByLocal "drawing" root |> Seq.choose (Xml.attrLocal "id")
 
@@ -759,7 +763,7 @@ let private parseImages defaultColumnWidth defaultRowHeight (columns: Column[]) 
             let drawing = Xml.parseBytes drawingBytes
             let rels = Opc.loadRels archive drawingPath
             Seq.append (Xml.descendantsByLocal "twoCellAnchor" drawing) (Xml.descendantsByLocal "oneCellAnchor" drawing)
-            |> Seq.choose (parseImage defaultColumnWidth defaultRowHeight columns rows archive drawingPath rels))
+            |> Seq.choose (parseImage ct defaultColumnWidth defaultRowHeight columns rows archive drawingPath rels))
     |> Array.ofSeq
 
 /// .xlsx バイト列を解析する。
@@ -768,6 +772,7 @@ let parse (data: byte[]) : SpreadsheetData =
     let themeColors = parseThemeColors archive
     let styles = parseStyles archive
     let shared = parseSharedStrings archive themeColors
+    let contentTypes = Opc.loadContentTypes archive
     let workbookPath = Opc.officeDocumentPath archive |> Option.defaultValue "xl/workbook.xml"
     let rels = Opc.loadRels archive workbookPath
 
@@ -796,7 +801,7 @@ let parse (data: byte[]) : SpreadsheetData =
                         let showGridLines = parseShowGridLines sheetRoot
                         let columns = parseColumns sheetRoot
                         let rows = parseRows shared styles themeColors sheetRoot
-                        let images = parseImages defaultColumnWidth defaultRowHeight columns rows archive sheetPath sheetRoot
+                        let images = parseImages contentTypes defaultColumnWidth defaultRowHeight columns rows archive sheetPath sheetRoot
                         let maxCol =
                             let cellCols = rows |> Array.collect (fun r -> r.cells |> Array.map (fun c -> c.col))
                             let imageCols = images |> Array.collect (fun i -> [| i.col; i.toCol |])
