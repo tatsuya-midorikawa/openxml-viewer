@@ -230,8 +230,26 @@
         td.dataset.col = String(c);
         const cell = cellByCol[c];
         if (cell !== undefined) {
+          if (cell.fillColor) td.style.backgroundColor = cell.fillColor;
           const text = el("span", "cell-text");
-          text.style.width = px(spillWidth(metrics, occupiedCols, c, maxCol));
+          const align = cell.align || "left";
+          text.style.textAlign = align;
+          if (cell.wrap) {
+            text.classList.add("wrap");
+            text.style.width = px(Math.max(1, metrics.colWidths[c] - 2 * CELL_TEXT_PADDING));
+          } else if (align === "left") {
+            text.style.width = px(spillWidth(metrics, occupiedCols, c, maxCol));
+          } else {
+            text.style.width = px(Math.max(1, metrics.colWidths[c] - 2 * CELL_TEXT_PADDING));
+          }
+          if (cell.valign === "top") {
+            text.style.top = "3px";
+            text.style.transform = "none";
+          } else if (cell.valign === "bottom") {
+            text.style.top = "auto";
+            text.style.bottom = "3px";
+            text.style.transform = "none";
+          }
           appendCellText(text, cell);
           td.title = String(cell.text);
           td.classList.add("has-value");
@@ -289,16 +307,41 @@
     blocks.forEach((block) => {
       if (block.kind === "heading") {
         const level = Math.min(Math.max(block.level || 1, 1), 6);
-        page.appendChild(el("h" + level, "heading", block.text));
+        const h = el("h" + level, "heading");
+        if (block.align) h.style.textAlign = block.align;
+        appendDocRuns(h, block);
+        page.appendChild(h);
       } else if (block.kind === "table") {
         page.appendChild(buildDocTable(block.rows || []));
       } else {
-        const p = el("p", "para", block.text);
+        const p = el("p", "para");
+        if (block.align) p.style.textAlign = block.align;
+        appendDocRuns(p, block);
         if (!block.text) p.classList.add("empty-para");
         page.appendChild(p);
       }
     });
     app.appendChild(page);
+  }
+
+  // 文書段落の run を装飾つきで描画する (run 内の改行は <br> へ展開)。
+  function appendDocRuns(node, block) {
+    const runs = block.runs || [];
+    if (runs.length === 0) {
+      node.textContent = block.text || "";
+      return;
+    }
+    runs.forEach((run) => {
+      if (!run || run.text === undefined || run.text === null) return;
+      String(run.text).split("\n").forEach((line, i) => {
+        if (i > 0) node.appendChild(document.createElement("br"));
+        if (line !== "") {
+          const span = el("span", "text-run", line);
+          applyRunStyle(span, run);
+          node.appendChild(span);
+        }
+      });
+    });
   }
 
   function buildDocTable(rows) {

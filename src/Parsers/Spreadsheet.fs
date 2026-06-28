@@ -161,20 +161,259 @@ let private indexedColor (index: int) : string =
     | 15 -> "#00FFFF"
     | _ -> ""
 
-let private parseColor (themeColors: Map<int, string>) (el: Xml.XmlElement) : string option =
-    Xml.tryChildByLocal "color" el
-    |> Option.bind (fun color ->
-        Xml.attrLocal "rgb" color
-        |> Option.map normalizeColor
-        |> Option.orElseWith (fun () ->
-            Xml.attrLocal "theme" color
-            |> Option.bind tryParseInt
-            |> Option.bind (fun theme -> Map.tryFind theme themeColors))
-        |> Option.orElseWith (fun () ->
-            Xml.attrLocal "indexed" color
-            |> Option.bind tryParseInt
-            |> Option.map indexedColor))
+let private rgbOfHex (color: string) : (int * int * int) option =
+    if color.Length = 7 && color.[0] = '#' then
+        Some(System.Convert.ToInt32(color.Substring(1, 2), 16), System.Convert.ToInt32(color.Substring(3, 2), 16), System.Convert.ToInt32(color.Substring(5, 2), 16))
+    else
+        None
+
+/// テーマ色の tint 属性 (-1..1) を近似適用する。負で暗く、正で明るくする。
+let private applyTint (tint: float) (color: string) : string =
+    if tint = 0.0 then color
+    else
+        match rgbOfHex color with
+        | None -> color
+        | Some(r, g, b) ->
+            let f channel =
+                let v = if tint < 0.0 then float channel * (1.0 + tint) else float channel + (255.0 - float channel) * tint
+                max 0 (min 255 (int (round v)))
+            sprintf "#%02X%02X%02X" (f r) (f g) (f b)
+
+/// 色要素 (color/fgColor 等) の rgb/theme/indexed/tint を解決する。
+let private colorFromElement (themeColors: Map<int, string>) (color: Xml.XmlElement) : string option =
+    Xml.attrLocal "rgb" color
+    |> Option.map normalizeColor
+    |> Option.orElseWith (fun () ->
+        Xml.attrLocal "theme" color
+        |> Option.bind tryParseInt
+        |> Option.bind (fun theme -> Map.tryFind theme themeColors)
+        |> Option.map (fun baseColor ->
+            let tint = attrFloat "tint" color |> Option.defaultValue 0.0
+            applyTint tint baseColor))
+    |> Option.orElseWith (fun () ->
+        Xml.attrLocal "indexed" color
+        |> Option.bind tryParseInt
+        |> Option.map indexedColor)
     |> Option.filter (fun color -> color <> "")
+
+let private parseColor (themeColors: Map<int, string>) (el: Xml.XmlElement) : string option =
+    Xml.tryChildByLocal "color" el |> Option.bind (colorFromElement themeColors)
+
+// ---------------------------------------------------------------------------
+// 数値書式 (ECMA-376 §18.8.30 numFmt)
+// ---------------------------------------------------------------------------
+
+/// 組み込み書式 ID (0..49) を書式コードへ対応付ける。
+let private builtinNumFmt (id: int) : string =
+    match id with
+    | 1 -> "0"
+    | 2 -> "0.00"
+    | 3 -> "#,##0"
+    | 4 -> "#,##0.00"
+    | 9 -> "0%"
+    | 10 -> "0.00%"
+    | 11 -> "0.00E+00"
+    | 12 -> "# ?/?"
+    | 13 -> "# ??/??"
+    | 14 -> "m/d/yyyy"
+    | 15 -> "d-mmm-yy"
+    | 16 -> "d-mmm"
+    | 17 -> "mmm-yy"
+    | 18 -> "h:mm AM/PM"
+    | 19 -> "h:mm:ss AM/PM"
+    | 20 -> "h:mm"
+    | 21 -> "h:mm:ss"
+    | 22 -> "m/d/yyyy h:mm"
+    | 37 -> "#,##0;(#,##0)"
+    | 38 -> "#,##0;[Red](#,##0)"
+    | 39 -> "#,##0.00;(#,##0.00)"
+    | 40 -> "#,##0.00;[Red](#,##0.00)"
+    | 45 -> "mm:ss"
+    | 46 -> "[h]:mm:ss"
+    | 47 -> "mm:ss.0"
+    | 48 -> "##0.0E+0"
+    | 49 -> "@"
+    | _ -> ""
+
+let private excelEpoch = System.DateTime(1899, 12, 30)
+let private monthsShort = [| "Jan"; "Feb"; "Mar"; "Apr"; "May"; "Jun"; "Jul"; "Aug"; "Sep"; "Oct"; "Nov"; "Dec" |]
+let private monthsLong = [| "January"; "February"; "March"; "April"; "May"; "June"; "July"; "August"; "September"; "October"; "November"; "December" |]
+let private daysShort = [| "Sun"; "Mon"; "Tue"; "Wed"; "Thu"; "Fri"; "Sat" |]
+let private daysLong = [| "Sunday"; "Monday"; "Tuesday"; "Wednesday"; "Thursday"; "Friday"; "Saturday" |]
+
+let private padZero (width: int) (n: int) : string =
+    let s = string n
+    if s.Length >= width then s else System.String('0', width - s.Length) + s
+
+/// 書式コードから引用符・エスケープ・角括弧を除去する (日付判定用)。
+let private stripFormatLiterals (code: string) : string =
+    let sb = System.Text.StringBuilder()
+    let mutable i = 0
+    let n = code.Length
+    while i < n do
+        let c = code.[i]
+        if c = '"' then
+            let e = code.IndexOf('"', i + 1)
+            i <- (if e < 0 then n else e + 1)
+        elif c = '\\' && i + 1 < n then i <- i + 2
+        elif c = '[' then
+            let e = code.IndexOf(']', i)
+            i <- (if e < 0 then n else e + 1)
+        else
+            sb.Append c |> ignore
+            i <- i + 1
+    sb.ToString()
+
+/// 書式コードが日付・時刻書式かどうかを判定する。
+let private isDateFormat (code: string) : bool =
+    let cleaned = (stripFormatLiterals code).ToLower()
+    if cleaned.Contains "e+" || cleaned.Contains "e-" then false
+    else cleaned |> Seq.exists (fun c -> c = 'y' || c = 'd' || c = 'h' || c = 's' || c = 'm')
+
+/// 日付・時刻書式コードに従って日時を整形する。
+let private formatDate (code: string) (dt: System.DateTime) : string =
+    let n = code.Length
+    let hour12 =
+        let low = code.ToLower()
+        low.Contains "am/pm" || low.Contains "a/p"
+    let sb = System.Text.StringBuilder()
+    let mutable i = 0
+    let mutable prevWasHour = false
+    while i < n do
+        let c = code.[i]
+        let cl = System.Char.ToLower c
+        if c = '"' then
+            let e = code.IndexOf('"', i + 1)
+            let endq = if e < 0 then n else e
+            sb.Append(code.Substring(i + 1, endq - i - 1)) |> ignore
+            i <- (if e < 0 then n else e + 1)
+        elif c = '\\' && i + 1 < n then
+            sb.Append(code.[i + 1]) |> ignore
+            i <- i + 2
+        elif c = '[' then
+            let e = code.IndexOf(']', i)
+            i <- (if e < 0 then n else e + 1)
+        elif cl = 'y' then
+            let mutable j = i
+            while j < n && System.Char.ToLower code.[j] = 'y' do j <- j + 1
+            sb.Append(if j - i >= 4 then string dt.Year else padZero 2 (dt.Year % 100)) |> ignore
+            prevWasHour <- false
+            i <- j
+        elif cl = 'd' then
+            let mutable j = i
+            while j < n && System.Char.ToLower code.[j] = 'd' do j <- j + 1
+            let v =
+                match j - i with
+                | 1 -> string dt.Day
+                | 2 -> padZero 2 dt.Day
+                | 3 -> daysShort.[int dt.DayOfWeek]
+                | _ -> daysLong.[int dt.DayOfWeek]
+            sb.Append v |> ignore
+            prevWasHour <- false
+            i <- j
+        elif cl = 'h' then
+            let mutable j = i
+            while j < n && System.Char.ToLower code.[j] = 'h' do j <- j + 1
+            let h = if hour12 then (let hh = dt.Hour % 12 in if hh = 0 then 12 else hh) else dt.Hour
+            sb.Append(if j - i >= 2 then padZero 2 h else string h) |> ignore
+            prevWasHour <- true
+            i <- j
+        elif cl = 's' then
+            let mutable j = i
+            while j < n && System.Char.ToLower code.[j] = 's' do j <- j + 1
+            sb.Append(if j - i >= 2 then padZero 2 dt.Second else string dt.Second) |> ignore
+            prevWasHour <- false
+            i <- j
+        elif cl = 'm' then
+            let mutable j = i
+            while j < n && System.Char.ToLower code.[j] = 'm' do j <- j + 1
+            let mutable k = j
+            while k < n && not (System.Char.IsLetter code.[k]) do k <- k + 1
+            let nextIsSec = k < n && System.Char.ToLower code.[k] = 's'
+            if prevWasHour || nextIsSec then
+                sb.Append(if j - i >= 2 then padZero 2 dt.Minute else string dt.Minute) |> ignore
+            else
+                let v =
+                    match j - i with
+                    | 1 -> string dt.Month
+                    | 2 -> padZero 2 dt.Month
+                    | 3 -> monthsShort.[dt.Month - 1]
+                    | _ -> monthsLong.[dt.Month - 1]
+                sb.Append v |> ignore
+            prevWasHour <- false
+            i <- j
+        elif hour12 && (cl = 'a') && i + 4 < n + 1 && (code.Substring(i, min 5 (n - i))).ToUpper().StartsWith "AM/PM" then
+            sb.Append(if dt.Hour < 12 then "AM" else "PM") |> ignore
+            i <- i + 5
+        else
+            sb.Append c |> ignore
+            i <- i + 1
+    sb.ToString()
+
+/// 書式コードの小数部桁数を数える。
+let private decimalsOf (code: string) : int =
+    let dot = code.IndexOf '.'
+    if dot < 0 then 0
+    else
+        let mutable cnt = 0
+        let mutable i = dot + 1
+        while i < code.Length && (code.[i] = '0' || code.[i] = '#') do
+            cnt <- cnt + 1
+            i <- i + 1
+        cnt
+
+/// 整数部に 3 桁区切りを挿入する。
+let private groupThousands (intPart: string) : string =
+    let n = intPart.Length
+    if n <= 3 then intPart
+    else
+        let sb = System.Text.StringBuilder()
+        for k in 0 .. n - 1 do
+            if k > 0 && (n - k) % 3 = 0 then sb.Append ',' |> ignore
+            sb.Append(intPart.[k]) |> ignore
+        sb.ToString()
+
+/// 数値書式コードに従って数値を整形する。
+let private formatNumber (code: string) (value: float) : string =
+    let section = (code.Split(';')).[0]
+    let isPercent = section.Contains "%"
+    let v0 = if isPercent then value * 100.0 else value
+    let decimals = decimalsOf section
+    let useThousands = section.Contains ","
+    let neg = v0 < 0.0
+    let av = abs v0
+    let rounded = System.Math.Round(av, decimals)
+    let intVal = floor rounded
+    let intStr =
+        let s = sprintf "%.0f" intVal
+        if useThousands then groupThousands s else s
+    let frac =
+        if decimals > 0 then
+            let scaled = System.Math.Round((rounded - intVal) * (10.0 ** float decimals))
+            "." + padZero decimals (int scaled)
+        else ""
+    let body = intStr + frac + (if isPercent then "%" else "")
+    if neg then "-" + body else body
+
+/// セルの数値書式を表示用文字列へ適用する。書式が無ければ素の値を返す。
+let private applyNumberFormat (code: string) (raw: string) : string =
+    if code = "" || code = "General" || code = "@" then raw
+    else
+        match tryParseFloat raw with
+        | None -> raw
+        | Some value ->
+            if isDateFormat code then formatDate code (excelEpoch.AddDays value)
+            else formatNumber code value
+
+/// 塗りつぶし (fill) の前景色を求める。patternType=none は空。
+let private fillColorOf (themeColors: Map<int, string>) (fill: Xml.XmlElement) : string =
+    match Xml.tryChildByLocal "patternFill" fill with
+    | Some pf ->
+        let pt = Xml.attrLocal "patternType" pf |> Option.defaultValue "none"
+        if pt = "none" then ""
+        else Xml.tryChildByLocal "fgColor" pf |> Option.bind (colorFromElement themeColors) |> Option.defaultValue ""
+    | None -> ""
+
 
 let private parseFont (themeColors: Map<int, string>) (font: Xml.XmlElement) : FontStyle =
     { Bold = Xml.tryChildByLocal "b" font |> Option.isSome
@@ -185,25 +424,75 @@ let private parseFont (themeColors: Map<int, string>) (font: Xml.XmlElement) : F
       FontName = Xml.tryChildByLocal "name" font |> Option.bind (Xml.attrLocal "val") |> Option.defaultValue defaultFont.FontName
       Color = parseColor themeColors font |> Option.defaultValue defaultFont.Color }
 
-let private parseStyleFonts (archive: Zip.ZipArchive) : FontStyle[] =
+type private CellStyle =
+    { Font: FontStyle
+      NumFmtCode: string
+      FillColor: string
+      Align: string
+      VAlign: string
+      Wrap: bool }
+
+let private defaultCellStyle =
+    { Font = defaultFont
+      NumFmtCode = ""
+      FillColor = ""
+      Align = ""
+      VAlign = ""
+      Wrap = false }
+
+let private parseStyles (archive: Zip.ZipArchive) : CellStyle[] =
     match Zip.tryReadBytes archive "xl/styles.xml" with
-    | None -> [| defaultFont |]
+    | None -> [| defaultCellStyle |]
     | Some bytes ->
         let styles = Xml.parseBytes bytes
         let themeColors = parseThemeColors archive
+        let customFmts =
+            match Xml.tryChildByLocal "numFmts" styles with
+            | Some el ->
+                Xml.childrenByLocal "numFmt" el
+                |> List.choose (fun f ->
+                    match attrInt "numFmtId" f, Xml.attrLocal "formatCode" f with
+                    | Some id, Some code -> Some(id, code)
+                    | _ -> None)
+                |> Map.ofList
+            | None -> Map.empty
+        let numFmtCode id =
+            match Map.tryFind id customFmts with
+            | Some c -> c
+            | None -> builtinNumFmt id
         let fonts =
             match Xml.tryChildByLocal "fonts" styles with
             | Some fonts -> Xml.childrenByLocal "font" fonts |> List.map (parseFont themeColors) |> Array.ofList
             | None -> [| defaultFont |]
-
+        let fills =
+            match Xml.tryChildByLocal "fills" styles with
+            | Some el -> Xml.childrenByLocal "fill" el |> List.map (fillColorOf themeColors) |> Array.ofList
+            | None -> [||]
         match Xml.tryChildByLocal "cellXfs" styles with
         | Some cellXfs ->
             Xml.childrenByLocal "xf" cellXfs
             |> List.map (fun xf ->
-                let fontId = attrInt "fontId" xf |> Option.defaultValue 0
-                if fontId >= 0 && fontId < fonts.Length then fonts.[fontId] else defaultFont)
+                let font =
+                    match attrInt "fontId" xf with
+                    | Some i when i >= 0 && i < fonts.Length -> fonts.[i]
+                    | _ -> defaultFont
+                let numCode = attrInt "numFmtId" xf |> Option.map numFmtCode |> Option.defaultValue ""
+                let fillColor =
+                    match attrInt "fillId" xf with
+                    | Some i when i >= 2 && i < fills.Length -> fills.[i]
+                    | _ -> ""
+                let alignEl = Xml.tryChildByLocal "alignment" xf
+                let align = alignEl |> Option.bind (Xml.attrLocal "horizontal") |> Option.defaultValue ""
+                let valign = alignEl |> Option.bind (Xml.attrLocal "vertical") |> Option.defaultValue ""
+                let wrap = alignEl |> Option.bind (Xml.attrLocal "wrapText") |> Option.map (fun v -> v = "1" || v.ToLower() = "true") |> Option.defaultValue false
+                { Font = font
+                  NumFmtCode = numCode
+                  FillColor = fillColor
+                  Align = align
+                  VAlign = valign
+                  Wrap = wrap })
             |> Array.ofList
-        | None -> fonts
+        | None -> [| defaultCellStyle |]
 
 let private rawTextRun text =
     { Text = text
@@ -266,14 +555,15 @@ let private parseSharedStrings (archive: Zip.ZipArchive) (themeColors: Map<int, 
         |> Array.ofList
 
 /// 1 つのセルを解析する。
-let private parseCell (shared: RichTextValue[]) (styleFonts: FontStyle[]) (themeColors: Map<int, string>) (c: Xml.XmlElement) : Cell =
+let private parseCell (shared: RichTextValue[]) (styles: CellStyle[]) (themeColors: Map<int, string>) (c: Xml.XmlElement) : Cell =
     let col = Xml.attrLocal "r" c |> Option.map colFromRef |> Option.defaultValue 0
     let cellType = Xml.attrLocal "t" c |> Option.defaultValue "n"
-    let font =
+    let style =
         Xml.attrLocal "s" c
         |> Option.bind tryParseInt
-        |> Option.bind (fun i -> if i >= 0 && i < styleFonts.Length then Some styleFonts.[i] else None)
-        |> Option.defaultValue defaultFont
+        |> Option.bind (fun i -> if i >= 0 && i < styles.Length then Some styles.[i] else None)
+        |> Option.defaultValue defaultCellStyle
+    let vText () = Xml.tryChildByLocal "v" c |> Option.map Xml.innerText |> Option.defaultValue ""
     let value =
         match cellType with
         | "s" ->
@@ -284,14 +574,27 @@ let private parseCell (shared: RichTextValue[]) (styleFonts: FontStyle[]) (theme
             match Xml.tryChildByLocal "is" c with
             | Some is -> richText themeColors is
             | None -> { Text = ""; Runs = [||] }
+        | "b" -> { Text = (if vText () = "1" then "TRUE" else "FALSE"); Runs = [||] }
+        | "e" | "str" -> { Text = vText (); Runs = [||] }
         | _ ->
-            match Xml.tryChildByLocal "v" c with
-            | Some v -> { Text = Xml.innerText v; Runs = [||] }
-            | None -> { Text = ""; Runs = [||] }
+            let raw = vText ()
+            { Text = applyNumberFormat style.NumFmtCode raw; Runs = [||] }
     let runs =
-        if value.Runs.Length = 0 && value.Text <> "" then [| materializeRun font (rawTextRun value.Text) |]
-        else value.Runs |> Array.map (materializeRun font)
-    { col = col; text = value.Text; runs = runs }
+        if value.Runs.Length = 0 && value.Text <> "" then [| materializeRun style.Font (rawTextRun value.Text) |]
+        else value.Runs |> Array.map (materializeRun style.Font)
+    let defaultAlign =
+        match cellType with
+        | "s" | "inlineStr" | "str" -> "left"
+        | "b" | "e" -> "center"
+        | _ -> "right"
+    let align = if style.Align <> "" && style.Align <> "general" then style.Align else defaultAlign
+    { col = col
+      text = value.Text
+      runs = runs
+      fillColor = style.FillColor
+      align = align
+      valign = style.VAlign
+      wrap = style.Wrap }
 
 /// ワークシートの既定寸法を解析する。
 let private parseSheetDefaults (root: Xml.XmlElement) : float * float =
@@ -326,7 +629,7 @@ let private parseColumns (root: Xml.XmlElement) : Column[] =
         |> Array.ofList
 
 /// ワークシート XML の行配列を解析する。
-let private parseRows (shared: RichTextValue[]) (styleFonts: FontStyle[]) (themeColors: Map<int, string>) (root: Xml.XmlElement) : Row[] =
+let private parseRows (shared: RichTextValue[]) (styles: CellStyle[]) (themeColors: Map<int, string>) (root: Xml.XmlElement) : Row[] =
     match Xml.tryChildByLocal "sheetData" root with
     | None -> [||]
     | Some sheetData ->
@@ -336,7 +639,7 @@ let private parseRows (shared: RichTextValue[]) (styleFonts: FontStyle[]) (theme
             let height = attrFloat "ht" row |> Option.defaultValue 0.0
             let cells =
                 Xml.childrenByLocal "c" row
-                |> List.map (parseCell shared styleFonts themeColors)
+                |> List.map (parseCell shared styles themeColors)
                 |> Array.ofList
             { index = idx; height = height; cells = cells })
         |> Array.ofList
@@ -463,11 +766,12 @@ let private parseImages defaultColumnWidth defaultRowHeight (columns: Column[]) 
 let parse (data: byte[]) : SpreadsheetData =
     let archive = Zip.read data
     let themeColors = parseThemeColors archive
-    let styleFonts = parseStyleFonts archive
+    let styles = parseStyles archive
     let shared = parseSharedStrings archive themeColors
-    let rels = Opc.loadRels archive "xl/workbook.xml"
+    let workbookPath = Opc.officeDocumentPath archive |> Option.defaultValue "xl/workbook.xml"
+    let rels = Opc.loadRels archive workbookPath
 
-    match Zip.tryReadBytes archive "xl/workbook.xml" with
+    match Zip.tryReadBytes archive workbookPath with
     | None -> { kind = "spreadsheet"; sheets = [||] }
     | Some wbBytes ->
         let wb = Xml.parseBytes wbBytes
@@ -481,7 +785,7 @@ let parse (data: byte[]) : SpreadsheetData =
                     let target =
                         Xml.attrLocal "id" sheetEl
                         |> Option.bind (fun rid -> Map.tryFind rid rels)
-                        |> Option.map (fun r -> Opc.resolveTarget "xl/workbook.xml" r.Target)
+                        |> Option.map (fun r -> Opc.resolveTarget workbookPath r.Target)
                     match target with
                     | Some sheetPath ->
                         match Zip.tryReadBytes archive sheetPath with
@@ -491,7 +795,7 @@ let parse (data: byte[]) : SpreadsheetData =
                         let defaultColumnWidth, defaultRowHeight = parseSheetDefaults sheetRoot
                         let showGridLines = parseShowGridLines sheetRoot
                         let columns = parseColumns sheetRoot
-                        let rows = parseRows shared styleFonts themeColors sheetRoot
+                        let rows = parseRows shared styles themeColors sheetRoot
                         let images = parseImages defaultColumnWidth defaultRowHeight columns rows archive sheetPath sheetRoot
                         let maxCol =
                             let cellCols = rows |> Array.collect (fun r -> r.cells |> Array.map (fun c -> c.col))

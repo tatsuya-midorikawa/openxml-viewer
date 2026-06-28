@@ -115,8 +115,14 @@ table.grid.hide-gridlines td {
   white-space: pre;
 }
 
+.cell-text.wrap {
+  white-space: normal;
+}
+
 .slide-text .text-run,
-.slide-para .text-run {
+.slide-para .text-run,
+.para .text-run,
+.heading .text-run {
   white-space: pre-wrap;
 }
 

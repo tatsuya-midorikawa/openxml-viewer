@@ -60,3 +60,15 @@ let loadRels (archive: Zip.ZipArchive) (partPath: string) : Map<string, Relation
         |> List.map (fun r -> r.Id, r)
         |> Map.ofList
     | None -> Map.empty
+
+/// パッケージ ルートリレーションシップ (/_rels/.rels) から、指定タイプのターゲットパートを解決する。
+let partByRelType (archive: Zip.ZipArchive) (relTypeSuffix: string) : string option =
+    loadRels archive ""
+    |> Map.toSeq
+    |> Seq.tryPick (fun (_, rel) ->
+        if rel.Type.EndsWith relTypeSuffix && rel.TargetMode <> "External" then Some(resolveTarget "" rel.Target)
+        else None)
+
+/// メイン文書パート (officeDocument リレーションシップのターゲット) を解決する。
+let officeDocumentPath (archive: Zip.ZipArchive) : string option =
+    partByRelType archive "/officeDocument"

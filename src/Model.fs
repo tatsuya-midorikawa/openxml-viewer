@@ -21,7 +21,11 @@ type TextRun =
 type Cell =
     { col: int
       text: string
-      runs: TextRun[] }
+      runs: TextRun[]
+      fillColor: string
+      align: string
+      valign: string
+      wrap: bool }
 
 /// 行。index は 1 始まりの行番号。
 type Row =
@@ -74,6 +78,8 @@ type Block =
       style: string
       level: int
       text: string
+      runs: TextRun[]
+      align: string
       rows: string[][] }
 
 /// 文書全体。

@@ -237,14 +237,19 @@ let private runStyle (themeColors: Map<string, string>) (baseRun: TextRun) (text
     match rPr with
     | None -> { baseRun with text = text }
     | Some rPr ->
+        let isLink = Xml.tryChildByLocal "hlinkClick" rPr |> Option.isSome
+        let explicitColor = solidFillColor themeColors rPr
         { text = text
           bold = Xml.attrLocal "b" rPr |> Option.map (fun v -> v <> "0" && v.ToLower() <> "false") |> Option.defaultValue baseRun.bold
           italic = Xml.attrLocal "i" rPr |> Option.map (fun v -> v <> "0" && v.ToLower() <> "false") |> Option.defaultValue baseRun.italic
-          underline = Xml.attrLocal "u" rPr |> Option.map (fun v -> v <> "none") |> Option.defaultValue baseRun.underline
+          underline = (Xml.attrLocal "u" rPr |> Option.map (fun v -> v <> "none") |> Option.defaultValue baseRun.underline) || isLink
           strike = Xml.attrLocal "strike" rPr |> Option.map (fun v -> v <> "noStrike") |> Option.defaultValue baseRun.strike
           fontSize = attrFloat "sz" rPr |> Option.map (fun v -> v / 100.0) |> Option.defaultValue baseRun.fontSize
           fontName = let name = fontName rPr in if name = "" then baseRun.fontName else name
-          color = solidFillColor themeColors rPr |> Option.defaultValue baseRun.color }
+          color =
+            match explicitColor with
+            | Some c -> c
+            | None -> if isLink then Map.tryFind "hlink" themeColors |> Option.defaultValue baseRun.color else baseRun.color }
 
 let private paragraphRuns (themeColors: Map<string, string>) (baseRun: TextRun) (p: Xml.XmlElement) : TextRun[] =
     p
@@ -564,9 +569,10 @@ let private parseSlide (archive: Zip.ZipArchive) (themeColors: Map<string, strin
 let parse (data: byte[]) : PresentationData =
     let archive = Zip.read data
     let themeColors = parseThemeColors archive
-    let rels = Opc.loadRels archive "ppt/presentation.xml"
+    let presentationPath = Opc.officeDocumentPath archive |> Option.defaultValue "ppt/presentation.xml"
+    let rels = Opc.loadRels archive presentationPath
 
-    match Zip.tryReadBytes archive "ppt/presentation.xml" with
+    match Zip.tryReadBytes archive presentationPath with
     | None -> { kind = "presentation"; slides = [||] }
     | Some bytes ->
         let pres = Xml.parseBytes bytes
@@ -581,7 +587,7 @@ let parse (data: byte[]) : PresentationData =
             |> List.mapi (fun i rid -> i, rid)
             |> List.choose (fun (i, rid) ->
                 Map.tryFind rid rels
-                |> Option.map (fun r -> Opc.resolveTarget "ppt/presentation.xml" r.Target)
+                |> Option.map (fun r -> Opc.resolveTarget presentationPath r.Target)
                 |> Option.bind (fun slidePath ->
                     Zip.tryReadBytes archive slidePath
                     |> Option.map (fun sb -> parseSlide archive themeColors slidePath slideWidth slideHeight (i + 1) (Xml.parseBytes sb))))
