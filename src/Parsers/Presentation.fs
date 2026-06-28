@@ -489,17 +489,19 @@ let private parseImage (ct: Opc.ContentTypes) (archive: Zip.ZipArchive) (slidePa
         | None -> None
     | _ -> None
 
-let private tableCell (themeColors: Map<string, string>) (tc: Xml.XmlElement) : SlideTableCell =
+let private tableCell (themeColors: Map<string, string>) (styleFill: string) (headerStyle: bool) (tc: Xml.XmlElement) : SlideTableCell =
     let txBody = Xml.tryChildByLocal "txBody" tc
+    let headerRun (r: TextRun) =
+        if headerStyle then { r with bold = true; color = (if r.color = "" then "#FFFFFF" else r.color) } else r
     let runs =
         match txBody with
-        | Some txBody -> Xml.childrenByLocal "p" txBody |> List.collect (paragraphRuns themeColors defaultRun >> Array.toList) |> Array.ofList
+        | Some txBody -> Xml.childrenByLocal "p" txBody |> List.collect (paragraphRuns themeColors defaultRun >> Array.toList) |> List.map headerRun |> Array.ofList
         | None -> [||]
     let text = runs |> Array.map (fun run -> run.text) |> String.concat ""
     let tcPr = Xml.tryChildByLocal "tcPr" tc
     { text = text
       runs = runs
-      fillColor = tcPr |> Option.bind (solidFillColor themeColors) |> Option.defaultValue ""
+      fillColor = tcPr |> Option.bind (solidFillColor themeColors) |> Option.defaultValue styleFill
       textAlign = txBody |> Option.map textAlign |> Option.defaultValue "left"
       verticalAlign = tcPr |> Option.bind (Xml.attrLocal "anchor") |> Option.map (function | "ctr" -> "center" | "b" -> "bottom" | _ -> "top") |> Option.defaultValue "top" }
 
@@ -508,6 +510,15 @@ let private parseTable (themeColors: Map<string, string>) (frame: Xml.XmlElement
     | None -> None
     | Some tbl ->
         let x, y, width, height = transform frame
+        let tblPr = Xml.tryChildByLocal "tblPr" tbl
+        let flag name = tblPr |> Option.bind (Xml.attrLocal name) |> Option.map (fun v -> v = "1" || v.ToLower() = "true") |> Option.defaultValue false
+        let firstRow = flag "firstRow"
+        let bandRow = flag "bandRow"
+        // tblPr が表スタイル (firstRow/bandRow) を指定している場合、テーマ accent1 で
+        // ヘッダー背景・縞模様・ヘッダー文字色を近似する (個別 tcPr の塗りは優先)。
+        let accent = Map.tryFind "accent1" themeColors
+        let headerFill = accent |> Option.defaultValue ""
+        let bandFill = accent |> Option.map (fun c -> applyColorMods c None None None (Some 0.2)) |> Option.defaultValue ""
         let columnWidths =
             Xml.descendantsByLocal "tblGrid" tbl
             |> Seq.tryHead
@@ -515,7 +526,13 @@ let private parseTable (themeColors: Map<string, string>) (frame: Xml.XmlElement
             |> Option.defaultValue [||]
         let rows =
             Xml.childrenByLocal "tr" tbl
-            |> List.map (fun tr -> Xml.childrenByLocal "tc" tr |> List.map (tableCell themeColors) |> Array.ofList)
+            |> List.mapi (fun ri tr ->
+                let isHeader = firstRow && ri = 0
+                let styleFill =
+                    if isHeader then headerFill
+                    elif bandRow && (ri - (if firstRow then 1 else 0)) % 2 = 1 then bandFill
+                    else ""
+                Xml.childrenByLocal "tc" tr |> List.map (tableCell themeColors styleFill isHeader) |> Array.ofList)
             |> Array.ofList
         let rowHeights = Xml.childrenByLocal "tr" tbl |> List.map (fun tr -> attrFloat "h" tr |> Option.defaultValue 0.0) |> Array.ofList
         Some
