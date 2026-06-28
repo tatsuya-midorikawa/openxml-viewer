@@ -83,6 +83,17 @@ type DocumentData = { kind: string; blocks: Block[] }
 // プレゼンテーション (.pptx)
 // ---------------------------------------------------------------------------
 
+/// テキストボックス内の 1 段落 (DrawingML a:p)。
+type SlideParagraph =
+    { runs: TextRun[]
+      align: string
+      level: int
+      bullet: string
+      bulletColor: string
+      marginLeft: float
+      indent: float
+      lineSpace: float }
+
 /// スライド上に配置されたテキストボックス。
 type SlideTextBox =
     { x: float
@@ -90,14 +101,14 @@ type SlideTextBox =
       width: float
       height: float
       text: string
-      paragraphs: string[]
-      runs: TextRun[]
+      paragraphs: SlideParagraph[]
       fillColor: string
       lineColor: string
       lineWidth: float
       shapeType: string
-      textAlign: string
-      verticalAlign: string }
+      verticalAlign: string
+      adj1: float
+      adj2: float }
 
 /// スライド上に配置された図形。
 type SlideShape =
@@ -108,7 +119,9 @@ type SlideShape =
       fillColor: string
       lineColor: string
       lineWidth: float
-      shapeType: string }
+      shapeType: string
+      adj1: float
+      adj2: float }
 
 /// スライド上に配置された表セル。
 type SlideTableCell =

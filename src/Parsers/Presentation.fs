@@ -17,6 +17,12 @@ let private tryParseInt (s: string) : int option =
 let private tryParseFloat (s: string) : float option = tryParseInt s |> Option.map float
 let private attrFloat name el = Xml.attrLocal name el |> Option.bind tryParseFloat
 
+/// 符号付き整数 (調整値などで負値を取りうる) を解釈する。
+let private tryParseIntSigned (s: string) : int option =
+    let t = s.Trim()
+    if t.StartsWith "-" then tryParseInt (t.Substring 1) |> Option.map (fun v -> -v)
+    else tryParseInt t
+
 let private defaultSlideWidth = 12192000.0
 let private defaultSlideHeight = 6858000.0
 let private defaultTextSize = 18.0
@@ -37,16 +43,20 @@ let private rgbOfHex (color: string) : (int * int * int) option =
     else
         None
 
-let private applyLum (color: string) (lumMod: float option) (lumOff: float option) : string =
+/// schemeClr/srgbClr の輝度・濃淡変換 (lumMod/lumOff/shade/tint) をまとめて適用する。
+let private applyColorMods (color: string) (lumMod: float option) (lumOff: float option) (shade: float option) (tint: float option) : string =
     match rgbOfHex color with
     | None -> color
     | Some(r, g, b) ->
-        let m = defaultArg lumMod 1.0
-        let o = defaultArg lumOff 0.0
-        let clamp channel =
-            let v = int (round (float channel * m + 255.0 * o))
-            max 0 (min 255 v)
-        sprintf "#%02X%02X%02X" (clamp r) (clamp g) (clamp b)
+        let mutable rf = float r
+        let mutable gf = float g
+        let mutable bf = float b
+        match lumMod with Some m -> rf <- rf * m; gf <- gf * m; bf <- bf * m | None -> ()
+        match lumOff with Some o -> rf <- rf + 255.0 * o; gf <- gf + 255.0 * o; bf <- bf + 255.0 * o | None -> ()
+        match shade with Some s -> rf <- rf * s; gf <- gf * s; bf <- bf * s | None -> ()
+        match tint with Some t -> rf <- rf * t + 255.0 * (1.0 - t); gf <- gf * t + 255.0 * (1.0 - t); bf <- bf * t + 255.0 * (1.0 - t) | None -> ()
+        let clamp v = max 0 (min 255 (int (round v)))
+        sprintf "#%02X%02X%02X" (clamp rf) (clamp gf) (clamp bf)
 
 let private themeKey (scheme: string) : string =
     match scheme with
@@ -73,19 +83,26 @@ let private parseThemeColors (archive: Zip.ZipArchive) : Map<string, string> =
             |> Option.map (fun color -> name, color))
         |> Map.ofList
 
+let private colorMods (clr: Xml.XmlElement) =
+    let m name = Xml.tryChildByLocal name clr |> Option.bind (attrFloat "val") |> Option.map (fun v -> v / 100000.0)
+    m "lumMod", m "lumOff", m "shade", m "tint"
+
 let private childColor themeColors (fill: Xml.XmlElement) : string option =
     Xml.tryChildByLocal "srgbClr" fill
-    |> Option.bind (Xml.attrLocal "val")
-    |> Option.map normalizeColor
+    |> Option.bind (fun c ->
+        Xml.attrLocal "val" c
+        |> Option.map normalizeColor
+        |> Option.map (fun baseColor ->
+            let lm, lo, sh, ti = colorMods c
+            applyColorMods baseColor lm lo sh ti))
     |> Option.orElseWith (fun () ->
         Xml.tryChildByLocal "schemeClr" fill
         |> Option.bind (fun schemeClr ->
             Xml.attrLocal "val" schemeClr
             |> Option.bind (fun key -> Map.tryFind (themeKey key) themeColors)
             |> Option.map (fun baseColor ->
-                let lumMod = Xml.tryChildByLocal "lumMod" schemeClr |> Option.bind (attrFloat "val") |> Option.map (fun v -> v / 100000.0)
-                let lumOff = Xml.tryChildByLocal "lumOff" schemeClr |> Option.bind (attrFloat "val") |> Option.map (fun v -> v / 100000.0)
-                applyLum baseColor lumMod lumOff)))
+                let lm, lo, sh, ti = colorMods schemeClr
+                applyColorMods baseColor lm lo sh ti)))
     |> Option.orElseWith (fun () ->
         Xml.tryChildByLocal "sysClr" fill
         |> Option.bind (Xml.attrLocal "lastClr")
@@ -112,11 +129,34 @@ let private styleLineColor themeColors (sp: Xml.XmlElement) : string option =
     |> Option.bind (Xml.tryChildByLocal "lnRef")
     |> Option.bind (childColor themeColors)
 
+let private styleFontColor themeColors (sp: Xml.XmlElement) : string option =
+    Xml.tryChildByLocal "style" sp
+    |> Option.bind (Xml.tryChildByLocal "fontRef")
+    |> Option.bind (childColor themeColors)
+
 let private geometryType (sp: Xml.XmlElement) : string =
     Xml.descendantsByLocal "prstGeom" sp
     |> Seq.tryHead
     |> Option.bind (Xml.attrLocal "prst")
     |> Option.defaultValue "rect"
+
+/// prstGeom の調整値 (avLst の a:gd) を比率 (1.0 = 100%) で取り出す。
+let private adjustValue (sp: Xml.XmlElement) (name: string) (def: float) : float =
+    Xml.descendantsByLocal "gd" sp
+    |> Seq.tryPick (fun gd ->
+        match Xml.attrLocal "name" gd, Xml.attrLocal "fmla" gd with
+        | Some n, Some fmla when n = name && fmla.StartsWith "val " -> tryParseIntSigned (fmla.Substring 4) |> Option.map float
+        | _ -> None)
+    |> Option.defaultValue def
+    |> fun v -> v / 100000.0
+
+/// 吹き出しのしっぽ位置 (中心からの比率)。geometry が吹き出しでなければ 0,0。
+let private calloutAdjust (sp: Xml.XmlElement) : float * float =
+    let geom = geometryType sp
+    if geom.Contains "Callout" && (geom.Contains "wedge" || geom.Contains "Wedge") then
+        adjustValue sp "adj1" -20833.0, adjustValue sp "adj2" 62500.0
+    else
+        0.0, 0.0
 
 let private contentType (path: string) : string option =
     let lower = path.ToLower()
@@ -236,59 +276,135 @@ let private textAlign (txBody: Xml.XmlElement) : string =
         | _ -> "left")
     |> Option.defaultValue "left"
 
-let private verticalAlign (txBody: Xml.XmlElement) : string =
-    Xml.tryChildByLocal "bodyPr" txBody
-    |> Option.bind (Xml.attrLocal "anchor")
-    |> Option.map (function
-        | "ctr" -> "center"
-        | "b" -> "bottom"
-        | _ -> "top")
-    |> Option.defaultValue "top"
+let private isSymbolFont (font: string) : bool =
+    let f = font.ToLower()
+    f.Contains "wingding" || f.Contains "webding" || f = "symbol" || f.Contains "marlett"
 
-let private parseTextBox (themeColors: Map<string, string>) (baseRun: TextRun) (fallbackTransform: Xml.XmlElement -> (float * float * float * float) option) (sp: Xml.XmlElement) : SlideTextBox option =
+/// 箇条書き記号を表示用に変換する (記号フォント/私用領域はビュレットに置換)。
+let private displayBullet (ch: string) (font: string) : string =
+    if ch = "" then ""
+    else
+        let code = int ch.[0]
+        if isSymbolFont font || (code >= 0xF000 && code <= 0xF0FF) then "•"
+        else ch
+
+/// マスターの bodyStyle/titleStyle から指定レベルの lvlNpPr を取得する。
+let private masterLevelPPr (master: Xml.XmlElement option) (styleName: string) (level: int) : Xml.XmlElement option =
+    master
+    |> Option.bind (fun m -> Xml.descendantsByLocal styleName m |> Seq.tryHead)
+    |> Option.bind (fun style -> Xml.childrenByLocal (sprintf "lvl%dpPr" (level + 1)) style |> List.tryHead)
+
+/// 図形の bodyPr の anchor (縦位置) を取り出す。
+let private bodyPrAnchorOf (sp: Xml.XmlElement) : string option =
+    Xml.tryChildByLocal "txBody" sp
+    |> Option.bind (Xml.tryChildByLocal "bodyPr")
+    |> Option.bind (Xml.attrLocal "anchor")
+
+/// 1 段落 (a:p) を解析する。styleName は箇条書き/インデント継承元 (None なら継承なし)。
+let private buildParagraph (themeColors: Map<string, string>) (master: Xml.XmlElement option) (styleName: string option) (baseRun: TextRun) (p: Xml.XmlElement) : SlideParagraph =
+    let pPr = Xml.tryChildByLocal "pPr" p
+    let level = pPr |> Option.bind (Xml.attrLocal "lvl") |> Option.bind tryParseInt |> Option.defaultValue 0
+    let masterPPr = styleName |> Option.bind (fun s -> masterLevelPPr master s level)
+    let attrFrom name = pPr |> Option.bind (Xml.attrLocal name) |> Option.orElseWith (fun () -> masterPPr |> Option.bind (Xml.attrLocal name))
+    let align =
+        attrFrom "algn"
+        |> Option.map (function
+            | "ctr" -> "center"
+            | "r" -> "right"
+            | "just" -> "justify"
+            | _ -> "left")
+        |> Option.defaultValue "left"
+    let marginLeft = attrFrom "marL" |> Option.bind tryParseFloat |> Option.defaultValue 0.0
+    let indent = attrFrom "indent" |> Option.bind tryParseIntSigned |> Option.map float |> Option.defaultValue 0.0
+    let lnSpcOf el =
+        el
+        |> Option.bind (Xml.tryChildByLocal "lnSpc")
+        |> Option.bind (Xml.tryChildByLocal "spcPct")
+        |> Option.bind (attrFloat "val")
+        |> Option.map (fun v -> v / 100000.0)
+    let lineSpace = lnSpcOf pPr |> Option.orElseWith (fun () -> lnSpcOf masterPPr) |> Option.defaultValue 0.0
+    let runs = paragraphRuns themeColors baseRun p
+    let bullet, bulletColor =
+        match styleName, (pPr |> Option.bind (Xml.tryChildByLocal "buNone")) with
+        | Some "bodyStyle", None when runs.Length > 0 ->
+            let buSource =
+                match pPr |> Option.bind (Xml.tryChildByLocal "buChar") with
+                | Some _ -> pPr
+                | None -> masterPPr
+            let ch = buSource |> Option.bind (Xml.tryChildByLocal "buChar") |> Option.bind (Xml.attrLocal "char") |> Option.defaultValue ""
+            let font = buSource |> Option.bind (Xml.tryChildByLocal "buFont") |> Option.bind (Xml.attrLocal "typeface") |> Option.defaultValue ""
+            let clr = buSource |> Option.bind (Xml.tryChildByLocal "buClr") |> Option.bind (childColor themeColors) |> Option.defaultValue ""
+            displayBullet ch font, clr
+        | _ -> "", ""
+    { runs = runs
+      align = align
+      level = level
+      bullet = bullet
+      bulletColor = bulletColor
+      marginLeft = marginLeft
+      indent = indent
+      lineSpace = lineSpace }
+
+let private parseTextBox (themeColors: Map<string, string>) (master: Xml.XmlElement option) (baseRun: TextRun) (fallbackTransform: Xml.XmlElement -> (float * float * float * float) option) (fallbackAnchor: Xml.XmlElement -> string option) (sp: Xml.XmlElement) : SlideTextBox option =
     match Xml.tryChildByLocal "txBody" sp with
     | None -> None
     | Some txBody ->
-        let paras = shapeParagraphs txBody |> List.filter (fun s -> s <> "")
-        if List.isEmpty paras then
+        let paraTexts = shapeParagraphs txBody
+        if paraTexts |> List.forall (fun s -> s = "") then
             None
         else
+            let baseRun =
+                match styleFontColor themeColors sp with
+                | Some c when c <> "" -> { baseRun with color = c }
+                | _ -> baseRun
             let x, y, width, height = transformOpt sp |> Option.orElseWith (fun () -> fallbackTransform sp) |> Option.defaultValue (0.0, 0.0, 0.0, 0.0)
-            let paragraphRunLists = Xml.childrenByLocal "p" txBody |> List.map (paragraphRuns themeColors baseRun >> Array.toList)
-            let runs =
-                paragraphRunLists
-                |> List.mapi (fun i runs ->
-                    if i = 0 then runs else runStyle themeColors baseRun "\n" None :: runs)
-                |> List.collect id
-                |> Array.ofList
+            let styleName =
+                match placeholder sp with
+                | None -> None
+                | Some _ -> if isTitleShape sp then Some "titleStyle" else Some "bodyStyle"
+            let paragraphs = Xml.childrenByLocal "p" txBody |> List.map (buildParagraph themeColors master styleName baseRun) |> Array.ofList
             let spPr = Xml.tryChildByLocal "spPr" sp
             let fillColor = spPr |> Option.bind (solidFillColor themeColors) |> Option.orElseWith (fun () -> styleFillColor themeColors sp) |> Option.defaultValue ""
             let directLineColor, lineWidth = spPr |> Option.map (lineStyle themeColors) |> Option.defaultValue ("", 0.0)
             let lineColor = if directLineColor = "" then styleLineColor themeColors sp |> Option.defaultValue "" else directLineColor
+            let anchor =
+                bodyPrAnchorOf sp
+                |> Option.orElseWith (fun () -> fallbackAnchor sp)
+                |> Option.map (function
+                    | "ctr" -> "center"
+                    | "b" -> "bottom"
+                    | _ -> "top")
+                |> Option.defaultValue "top"
+            let adj1, adj2 = calloutAdjust sp
             Some
                 { x = x
                   y = y
                   width = width
                   height = height
-                  text = String.concat "\n" paras
-                  paragraphs = Array.ofList paras
-                  runs = runs
+                  text = paraTexts |> List.filter (fun s -> s <> "") |> String.concat "\n"
+                  paragraphs = paragraphs
                   fillColor = fillColor
                   lineColor = lineColor
                   lineWidth = lineWidth
                   shapeType = geometryType sp
-                  textAlign = textAlign txBody
-                  verticalAlign = verticalAlign txBody }
+                  verticalAlign = anchor
+                  adj1 = adj1
+                  adj2 = adj2 }
 
 let private parseShape (themeColors: Map<string, string>) (fallbackTransform: Xml.XmlElement -> (float * float * float * float) option) (sp: Xml.XmlElement) : SlideShape option =
     let spPr = Xml.tryChildByLocal "spPr" sp
     let fillColor = spPr |> Option.bind (solidFillColor themeColors) |> Option.orElseWith (fun () -> styleFillColor themeColors sp) |> Option.defaultValue ""
     let directLineColor, lineWidth = spPr |> Option.map (lineStyle themeColors) |> Option.defaultValue ("", 0.0)
     let lineColor = if directLineColor = "" then styleLineColor themeColors sp |> Option.defaultValue "" else directLineColor
-    if fillColor = "" && lineColor = "" then
+    let hasText =
+        match Xml.tryChildByLocal "txBody" sp with
+        | Some txBody -> shapeParagraphs txBody |> List.exists (fun s -> s <> "")
+        | None -> false
+    if hasText || (fillColor = "" && lineColor = "") then
         None
     else
         let x, y, width, height = transformOpt sp |> Option.orElseWith (fun () -> fallbackTransform sp) |> Option.defaultValue (0.0, 0.0, 0.0, 0.0)
+        let adj1, adj2 = calloutAdjust sp
         Some
             { x = x
               y = y
@@ -297,7 +413,9 @@ let private parseShape (themeColors: Map<string, string>) (fallbackTransform: Xm
               fillColor = fillColor
               lineColor = lineColor
               lineWidth = lineWidth
-              shapeType = geometryType sp }
+              shapeType = geometryType sp
+              adj1 = adj1
+              adj2 = adj2 }
 
 let private parseImage (archive: Zip.ZipArchive) (slidePath: string) (rels: Map<string, Opc.Relationship>) (pic: Xml.XmlElement) : SlideImage option =
     let rid = Xml.descendantsByLocal "blip" pic |> Seq.tryPick (Xml.attrLocal "embed")
@@ -422,8 +540,11 @@ let private parseSlide (archive: Zip.ZipArchive) (themeColors: Map<string, strin
     let fallbackTransform sp =
         inheritedPlaceholders
         |> Array.tryPick (fun candidate -> if samePlaceholder sp candidate then transformOpt candidate else None)
+    let fallbackAnchor sp =
+        inheritedPlaceholders
+        |> Array.tryPick (fun candidate -> if samePlaceholder sp candidate then bodyPrAnchorOf candidate else None)
     let shapeElements = Xml.descendantsByLocal "sp" root |> Array.ofSeq
-    let parseTextBoxFor sp = parseTextBox themeColors (defaultRunForShape themeColors master sp) fallbackTransform sp
+    let parseTextBoxFor sp = parseTextBox themeColors master (defaultRunForShape themeColors master sp) fallbackTransform fallbackAnchor sp
     let textBoxes = shapeElements |> Array.choose parseTextBoxFor
     let shapes = Array.append (inheritedDecorations themeColors inheritanceRoots) (shapeElements |> Array.choose (parseShape themeColors fallbackTransform))
     let images = Xml.descendantsByLocal "pic" root |> Seq.choose (parseImage archive slidePath rels) |> Array.ofSeq
@@ -436,7 +557,7 @@ let private parseSlide (archive: Zip.ZipArchive) (themeColors: Map<string, strin
             else None)
         |> Option.orElseWith (fun () -> textBoxes |> Array.tryHead |> Option.map (fun box -> box.text.Replace("\n", " ")))
         |> Option.defaultValue ""
-    let texts = textBoxes |> Array.collect (fun box -> box.paragraphs)
+    let texts = textBoxes |> Array.collect (fun box -> box.text.Split('\n'))
     { index = index; title = title; texts = texts; textBoxes = textBoxes; shapes = shapes; tables = tables; images = images; backgroundColor = backgroundColor; width = slideWidth; height = slideHeight }
 
 /// .pptx バイト列を解析する。

@@ -388,8 +388,8 @@
       textBoxes.forEach((box) => {
         const node = el("div", "slide-textbox");
         applySlideShapeStyle(node, box, slideWidth);
-        applyTextBoxStyle(node, box);
-        appendSlideText(node, box, slideWidth);
+        applyTextBoxVAlign(node, box);
+        appendSlideParagraphs(node, box, slideWidth);
         placeSlideItem(node, box, slideWidth, slideHeight);
         card.appendChild(node);
       });
@@ -404,9 +404,16 @@
 
   function applySlideShapeStyle(node, item, slideWidth) {
     const shapeType = item.shapeType || "rect";
+    const t = shapeType.toLowerCase();
     node.dataset.shapeType = shapeType;
-    node.classList.toggle("slide-shape-ellipse", shapeType.includes("Ellipse"));
-    node.classList.toggle("slide-shape-callout", shapeType.includes("Callout"));
+    const isCallout = t.includes("callout");
+    if (isCallout && (item.adj1 || item.adj2)) {
+      node.classList.add("slide-shape-callout");
+      node.style.overflow = "visible";
+      node.appendChild(buildCalloutSvg(item));
+      return;
+    }
+    node.classList.toggle("slide-shape-ellipse", t.includes("ellipse") && !isCallout);
     if (item.fillColor) node.style.backgroundColor = item.fillColor;
     if (item.lineColor) {
       node.style.borderColor = item.lineColor;
@@ -415,21 +422,60 @@
     }
   }
 
+  // wedgeEllipseCallout を ECMA-376 の幾何 (楕円 + しっぽ) に従って SVG で描画する。
+  function buildCalloutSvg(item) {
+    const ns = "http://www.w3.org/2000/svg";
+    const w = item.width || 1;
+    const h = item.height || 1;
+    const vbH = 100 * h / w; // viewBox を縦横同一スケールに保つ
+    const cx = 50;
+    const cy = vbH / 2;
+    const rx = 50;
+    const ry = vbH / 2;
+    const tipX = cx + (item.adj1 || 0) * 100;
+    const tipY = cy + (item.adj2 || 0) * vbH;
+    const pang = Math.atan2(item.adj2 || 0, item.adj1 || 0);
+    const half = 11 * Math.PI / 180; // 吹き出し基部の半角 (660000/60000 度)
+    const b1x = cx + rx * Math.cos(pang - half);
+    const b1y = cy + ry * Math.sin(pang - half);
+    const b2x = cx + rx * Math.cos(pang + half);
+    const b2y = cy + ry * Math.sin(pang + half);
+    const d = `M ${b1x} ${b1y} L ${tipX} ${tipY} L ${b2x} ${b2y} A ${rx} ${ry} 0 1 1 ${b1x} ${b1y} Z`;
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("class", "slide-shape-svg");
+    svg.setAttribute("viewBox", `0 0 100 ${vbH}`);
+    svg.setAttribute("preserveAspectRatio", "none");
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", d);
+    path.setAttribute("fill", item.fillColor || "transparent");
+    if (item.lineColor) {
+      path.setAttribute("stroke", item.lineColor);
+      path.setAttribute("stroke-width", String((item.lineWidth > 0 ? item.lineWidth : 1) * 1270000 / w));
+      path.setAttribute("stroke-linejoin", "round");
+    }
+    svg.appendChild(path);
+    return svg;
+  }
+
   function buildSlideTable(table, slideWidth) {
     const wrap = el("div", "slide-table-wrap");
     const htmlTable = el("table", "slide-table");
+    const columnWidths = table.columnWidths || [];
+    const colSum = columnWidths.reduce((sum, w) => sum + (w || 0), 0);
     const colgroup = el("colgroup");
-    (table.columnWidths || []).forEach((width) => {
+    columnWidths.forEach((width) => {
       const col = el("col");
-      col.style.width = `${emuToSlidePx(width) / emuToSlidePx(slideWidth) * 100}cqw`;
+      if (colSum > 0) col.style.width = `${(width || 0) / colSum * 100}%`;
       colgroup.appendChild(col);
     });
     htmlTable.appendChild(colgroup);
 
+    const rowHeights = table.rowHeights || [];
+    const rowSum = rowHeights.reduce((sum, h) => sum + (h || 0), 0);
     (table.rows || []).forEach((row, rowIndex) => {
       const tr = el("tr");
-      const rowHeight = (table.rowHeights || [])[rowIndex] || 0;
-      if (rowHeight > 0) tr.style.height = `${emuToSlidePx(rowHeight) / emuToSlidePx(slideWidth) * 100}cqw`;
+      const rowHeight = rowHeights[rowIndex] || 0;
+      if (rowHeight > 0 && rowSum > 0) tr.style.height = `${rowHeight / rowSum * 100}%`;
       (row || []).forEach((cell) => {
         const td = el("td", "slide-table-cell");
         if (cell.fillColor) td.style.backgroundColor = cell.fillColor;
@@ -444,24 +490,40 @@
     return wrap;
   }
 
-  function applyTextBoxStyle(node, box) {
-    const align = box.textAlign || "left";
-    node.style.textAlign = align;
+  function applyTextBoxVAlign(node, box) {
     const vertical = box.verticalAlign || "top";
     node.style.justifyContent = vertical === "center" ? "center" : (vertical === "bottom" ? "flex-end" : "flex-start");
   }
 
-  function appendSlideText(node, box, slideWidth) {
-    const runs = box.runs || [];
-    if (runs.length > 0) {
-      const p = el("p", "slide-text");
-      runs.forEach((run) => appendRunOrBreak(node, p, run, slideWidth));
-      if (p.childNodes.length > 0) node.appendChild(p);
-      return;
-    }
-
-    (box.paragraphs || [box.text || ""]).forEach((text) => {
-      if (text) node.appendChild(el("p", "slide-text", text));
+  // テキストボックスの段落を箇条書き・インデント・整列・行間つきで描画する。
+  function appendSlideParagraphs(node, box, slideWidth) {
+    (box.paragraphs || []).forEach((para) => {
+      const p = el("div", "slide-para");
+      p.style.textAlign = para.align || "left";
+      if (para.lineSpace > 0) p.style.lineHeight = String(para.lineSpace);
+      if (para.marginLeft > 0) p.style.paddingLeft = `${para.marginLeft / slideWidth * 100}cqw`;
+      if (para.indent) p.style.textIndent = `${para.indent / slideWidth * 100}cqw`;
+      if (para.bullet) {
+        const bullet = el("span", "slide-bullet", `${para.bullet}\u00A0`);
+        if (para.bulletColor) bullet.style.color = para.bulletColor;
+        p.appendChild(bullet);
+      }
+      const runs = para.runs || [];
+      if (runs.length === 0) {
+        p.appendChild(el("span", "text-run", "\u00A0"));
+      } else {
+        runs.forEach((run) => {
+          if (!run || run.text === undefined || run.text === null) return;
+          if (run.text === "\n") {
+            p.appendChild(el("br"));
+          } else {
+            const span = el("span", "text-run", String(run.text));
+            applySlideRunStyle(span, run, slideWidth);
+            p.appendChild(span);
+          }
+        });
+      }
+      node.appendChild(p);
     });
   }
 

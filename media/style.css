@@ -115,6 +115,11 @@ table.grid.hide-gridlines td {
   white-space: pre;
 }
 
+.slide-text .text-run,
+.slide-para .text-run {
+  white-space: pre-wrap;
+}
+
 table.grid th.col-head,
 table.grid th.row-head,
 table.grid th.corner {
@@ -290,20 +295,17 @@ table.doc-table td {
   border: 0 solid transparent;
 }
 
-.slide-shape-ellipse,
-.slide-shape-callout {
+.slide-shape-ellipse {
   border-radius: 50%;
 }
 
-.slide-shape-callout::after {
-  content: "";
+.slide-shape-svg {
   position: absolute;
-  left: 18%;
-  bottom: -10%;
-  width: 22%;
-  height: 24%;
-  background: inherit;
-  clip-path: polygon(0 0, 100% 0, 0 100%);
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
 }
 
 .slide-image {
@@ -318,6 +320,15 @@ table.doc-table td {
   overflow: hidden;
   color: #000;
   line-height: 1.15;
+}
+
+.slide-para {
+  position: relative;
+  margin: 0;
+}
+
+.slide-bullet {
+  font-family: Arial, sans-serif;
 }
 
 .slide-table-wrap {
