@@ -42,6 +42,9 @@
   const DEFAULT_ROW_HEIGHT = 15;
   const CELL_TEXT_PADDING = 6;
   const TRAILING_BLANK_COLUMNS = 20;
+  const PPT_EMU_PER_INCH = 914400;
+  const PPT_EXPORT_DPI = 81;
+  const PPT_EMU_PER_PIXEL = PPT_EMU_PER_INCH / PPT_EXPORT_DPI;
 
   function columnWidthToPx(width) {
     return Math.floor(width * 7 + 5);
@@ -49,6 +52,14 @@
 
   function rowHeightToPx(height) {
     return height * 96 / 72;
+  }
+
+  function emuToSlidePx(value) {
+    return value / PPT_EMU_PER_PIXEL;
+  }
+
+  function pointToSlidePx(value) {
+    return value * PPT_EXPORT_DPI / 72;
   }
 
   function columnWidth(sheet, col) {
@@ -346,11 +357,146 @@
 
   function buildSlide(slide) {
     const card = el("div", "slide-card");
-    if (slide.title) card.appendChild(el("h2", "slide-heading", slide.title));
-    (slide.texts || []).forEach((text) => {
-      card.appendChild(el("p", "slide-text", text));
+    const slideWidth = slide.width || 12192000;
+    const slideHeight = slide.height || 6858000;
+    card.style.aspectRatio = `${slideWidth} / ${slideHeight}`;
+    if (slide.backgroundColor) card.style.backgroundColor = slide.backgroundColor;
+
+    (slide.shapes || []).forEach((shape) => {
+      const node = el("div", "slide-shape");
+      applySlideShapeStyle(node, shape, slideWidth);
+      placeSlideItem(node, shape, slideWidth, slideHeight);
+      card.appendChild(node);
     });
+
+    (slide.tables || []).forEach((table) => {
+      const node = buildSlideTable(table, slideWidth);
+      placeSlideItem(node, table, slideWidth, slideHeight);
+      card.appendChild(node);
+    });
+
+    (slide.images || []).forEach((image) => {
+      const img = el("img", "slide-image");
+      img.alt = image.altText || "";
+      img.src = `data:${image.contentType};base64,${image.data}`;
+      placeSlideItem(img, image, slideWidth, slideHeight);
+      card.appendChild(img);
+    });
+
+    const textBoxes = slide.textBoxes || [];
+    if (textBoxes.length > 0) {
+      textBoxes.forEach((box) => {
+        const node = el("div", "slide-textbox");
+        applySlideShapeStyle(node, box, slideWidth);
+        applyTextBoxStyle(node, box);
+        appendSlideText(node, box, slideWidth);
+        placeSlideItem(node, box, slideWidth, slideHeight);
+        card.appendChild(node);
+      });
+    } else {
+      if (slide.title) card.appendChild(el("h2", "slide-heading", slide.title));
+      (slide.texts || []).forEach((text) => {
+        card.appendChild(el("p", "slide-text", text));
+      });
+    }
     return card;
+  }
+
+  function applySlideShapeStyle(node, item, slideWidth) {
+    const shapeType = item.shapeType || "rect";
+    node.dataset.shapeType = shapeType;
+    node.classList.toggle("slide-shape-ellipse", shapeType.includes("Ellipse"));
+    node.classList.toggle("slide-shape-callout", shapeType.includes("Callout"));
+    if (item.fillColor) node.style.backgroundColor = item.fillColor;
+    if (item.lineColor) {
+      node.style.borderColor = item.lineColor;
+      node.style.borderStyle = "solid";
+      node.style.borderWidth = `${pointToSlidePx(item.lineWidth || 1) / emuToSlidePx(slideWidth) * 100}cqw`;
+    }
+  }
+
+  function buildSlideTable(table, slideWidth) {
+    const wrap = el("div", "slide-table-wrap");
+    const htmlTable = el("table", "slide-table");
+    const colgroup = el("colgroup");
+    (table.columnWidths || []).forEach((width) => {
+      const col = el("col");
+      col.style.width = `${emuToSlidePx(width) / emuToSlidePx(slideWidth) * 100}cqw`;
+      colgroup.appendChild(col);
+    });
+    htmlTable.appendChild(colgroup);
+
+    (table.rows || []).forEach((row, rowIndex) => {
+      const tr = el("tr");
+      const rowHeight = (table.rowHeights || [])[rowIndex] || 0;
+      if (rowHeight > 0) tr.style.height = `${emuToSlidePx(rowHeight) / emuToSlidePx(slideWidth) * 100}cqw`;
+      (row || []).forEach((cell) => {
+        const td = el("td", "slide-table-cell");
+        if (cell.fillColor) td.style.backgroundColor = cell.fillColor;
+        td.style.textAlign = cell.textAlign || "left";
+        td.style.verticalAlign = cell.verticalAlign === "center" ? "middle" : (cell.verticalAlign === "bottom" ? "bottom" : "top");
+        appendRuns(td, cell.runs || [], cell.text || "", slideWidth);
+        tr.appendChild(td);
+      });
+      htmlTable.appendChild(tr);
+    });
+    wrap.appendChild(htmlTable);
+    return wrap;
+  }
+
+  function applyTextBoxStyle(node, box) {
+    const align = box.textAlign || "left";
+    node.style.textAlign = align;
+    const vertical = box.verticalAlign || "top";
+    node.style.justifyContent = vertical === "center" ? "center" : (vertical === "bottom" ? "flex-end" : "flex-start");
+  }
+
+  function appendSlideText(node, box, slideWidth) {
+    const runs = box.runs || [];
+    if (runs.length > 0) {
+      const p = el("p", "slide-text");
+      runs.forEach((run) => appendRunOrBreak(node, p, run, slideWidth));
+      if (p.childNodes.length > 0) node.appendChild(p);
+      return;
+    }
+
+    (box.paragraphs || [box.text || ""]).forEach((text) => {
+      if (text) node.appendChild(el("p", "slide-text", text));
+    });
+  }
+
+  function appendRuns(node, runs, fallbackText, slideWidth) {
+    if (runs.length === 0) {
+      node.textContent = fallbackText;
+      return;
+    }
+    const p = el("p", "slide-text");
+    runs.forEach((run) => appendRunOrBreak(node, p, run, slideWidth));
+    if (p.childNodes.length > 0) node.appendChild(p);
+  }
+
+  function appendRunOrBreak(parent, paragraph, run, slideWidth) {
+    if (!run || run.text === undefined || run.text === null) return;
+    if (run.text === "\n") {
+      parent.appendChild(paragraph.cloneNode(true));
+      clear(paragraph);
+    } else {
+      const span = el("span", "text-run", String(run.text));
+      applySlideRunStyle(span, run, slideWidth);
+      paragraph.appendChild(span);
+    }
+  }
+
+  function placeSlideItem(node, item, slideWidth, slideHeight) {
+    node.style.left = `${(item.x || 0) / slideWidth * 100}%`;
+    node.style.top = `${(item.y || 0) / slideHeight * 100}%`;
+    node.style.width = `${(item.width || 0) / slideWidth * 100}%`;
+    node.style.height = `${(item.height || 0) / slideHeight * 100}%`;
+  }
+
+  function applySlideRunStyle(node, run, slideWidth) {
+    applyRunStyle(node, run);
+    if (run.fontSize > 0) node.style.fontSize = `${pointToSlidePx(run.fontSize) / emuToSlidePx(slideWidth) * 100}cqw`;
   }
 
   // -------------------------------------------------------------------------

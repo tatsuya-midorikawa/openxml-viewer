@@ -70,7 +70,10 @@ let private joinPathRaw (uriApi: obj) (baseUri: Uri) (parts: string[]) : Uri = j
 let joinPath (baseUri: Uri) (parts: string list) : Uri = joinPathRaw uriApi baseUri (Array.ofList parts)
 
 /// ワークスペースのファイルシステム経由でファイルを読み込む。
-let readFile (uri: Uri) : JS.Promise<byte[]> = !!(workspace?fs?readFile (uri))
+[<Emit("$0.fs.readFile($1).then(function (bytes) {\n  function normalize(value) { return Array.from(value instanceof ArrayBuffer ? new Uint8Array(value) : value); }\n  function hasEocd(value) {\n    for (var i = value.length - 22; i >= Math.max(0, value.length - 22 - 65535); i--) {\n      if (value[i] === 0x50 && value[i + 1] === 0x4b && value[i + 2] === 0x05 && value[i + 3] === 0x06) return true;\n    }\n    return false;\n  }\n  var normalized = normalize(bytes);\n  if (hasEocd(normalized) || !$1 || $1.scheme !== 'file') return normalized;\n  try { return normalize(require('fs').readFileSync($1.fsPath)); } catch (_) { return normalized; }\n})")>]
+let private readFileRaw (workspace: obj) (uri: Uri) : JS.Promise<byte[]> = jsNative
+
+let readFile (uri: Uri) : JS.Promise<byte[]> = readFileRaw workspace uri
 
 [<Emit("$1.then($0)")>]
 let thenDo (callback: 'T -> unit) (promise: JS.Promise<'T>) : unit = jsNative

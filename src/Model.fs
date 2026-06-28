@@ -83,11 +83,73 @@ type DocumentData = { kind: string; blocks: Block[] }
 // プレゼンテーション (.pptx)
 // ---------------------------------------------------------------------------
 
+/// スライド上に配置されたテキストボックス。
+type SlideTextBox =
+    { x: float
+      y: float
+      width: float
+      height: float
+      text: string
+      paragraphs: string[]
+      runs: TextRun[]
+      fillColor: string
+      lineColor: string
+      lineWidth: float
+      shapeType: string
+      textAlign: string
+      verticalAlign: string }
+
+/// スライド上に配置された図形。
+type SlideShape =
+    { x: float
+      y: float
+      width: float
+      height: float
+      fillColor: string
+      lineColor: string
+      lineWidth: float
+      shapeType: string }
+
+/// スライド上に配置された表セル。
+type SlideTableCell =
+    { text: string
+      runs: TextRun[]
+      fillColor: string
+      textAlign: string
+      verticalAlign: string }
+
+/// スライド上に配置された表。
+type SlideTable =
+    { x: float
+      y: float
+      width: float
+      height: float
+      rows: SlideTableCell[][]
+      columnWidths: float[]
+      rowHeights: float[] }
+
+/// スライド上に配置された画像。
+type SlideImage =
+    { x: float
+      y: float
+      width: float
+      height: float
+      altText: string
+      contentType: string
+      data: string }
+
 /// スライド。
 type Slide =
     { index: int
       title: string
-      texts: string[] }
+      texts: string[]
+      textBoxes: SlideTextBox[]
+      shapes: SlideShape[]
+      tables: SlideTable[]
+      images: SlideImage[]
+      backgroundColor: string
+      width: float
+      height: float }
 
 /// プレゼンテーション全体。
 type PresentationData = { kind: string; slides: Slide[] }
