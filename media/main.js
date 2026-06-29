@@ -34,6 +34,249 @@
   }
 
   // -------------------------------------------------------------------------
+  // 検索
+  // -------------------------------------------------------------------------
+  // 表示モデルから {id, text, navigate} のインデックスを作り、Webview 内で完結して検索する。
+  // id は座標から決定的に算出し、各レンダラーが付与する data-search-id と一致させる
+  // (スプレッドシート/プレゼンはアクティブな面のみ DOM 化されるため、連番ではなく座標で対応付ける)。
+
+  function normalizeSearchText(value) {
+    return String(value === undefined || value === null ? "" : value).toLowerCase();
+  }
+
+  function searchSelector(id) {
+    return `[data-search-id="${id}"]`;
+  }
+
+  function scrollNodeIntoView(node) {
+    if (!node) return;
+    try {
+      node.scrollIntoView({ block: "center", inline: "nearest" });
+    } catch (_) {
+      node.scrollIntoView();
+    }
+  }
+
+  // run 配列を検索用のプレーン文字列へ連結する。
+  function runsText(runs) {
+    return (runs || [])
+      .map((run) => (run && run.text !== undefined && run.text !== null ? String(run.text) : ""))
+      .join("");
+  }
+
+  const search = {
+    entries: [],
+    matches: [],
+    active: -1,
+    query: "",
+    input: null,
+    count: null,
+    prev: null,
+    next: null,
+
+    // 新しい描画のたびにインデックスを差し替え、状態と装飾をリセットする。
+    reset(entries) {
+      this.entries = entries || [];
+      this.matches = [];
+      this.active = -1;
+      this.query = "";
+      if (this.input) this.input.value = "";
+      this.clearHighlights();
+      this.updateCount();
+    },
+
+    run(query) {
+      this.query = query || "";
+      const needle = normalizeSearchText(this.query);
+      this.clearHighlights();
+      if (needle === "") {
+        this.matches = [];
+        this.active = -1;
+        this.updateCount();
+        return;
+      }
+      this.matches = this.entries.filter((entry) => normalizeSearchText(entry.text).indexOf(needle) >= 0);
+      this.active = this.matches.length > 0 ? 0 : -1;
+      this.updateCount();
+      if (this.active >= 0) this.activate(this.active);
+    },
+
+    step(delta) {
+      if (this.matches.length === 0) return;
+      this.active = (this.active + delta + this.matches.length) % this.matches.length;
+      this.activate(this.active);
+      this.updateCount();
+    },
+
+    // 対象の面へ切り替え (必要時)、装飾を貼り直し、該当ノードを表示位置へスクロールする。
+    activate(index) {
+      const match = this.matches[index];
+      if (!match) return;
+      if (match.navigate) match.navigate();
+      this.applyHighlights();
+      scrollNodeIntoView(app.querySelector(searchSelector(match.id)));
+    },
+
+    // 現在の DOM 内に存在する一致ノードへ装飾を付ける (面切替後の再描画にも追従)。
+    applyHighlights() {
+      this.clearHighlights();
+      this.matches.forEach((match, i) => {
+        const nodes = app.querySelectorAll(searchSelector(match.id));
+        for (const node of nodes) {
+          node.classList.add("search-match");
+          if (i === this.active) node.classList.add("search-active");
+        }
+      });
+    },
+
+    clearHighlights() {
+      const nodes = app.querySelectorAll(".search-match, .search-active");
+      for (const node of nodes) node.classList.remove("search-match", "search-active");
+    },
+
+    updateCount() {
+      if (this.count) {
+        this.count.textContent = this.query === ""
+          ? ""
+          : `${this.matches.length === 0 ? 0 : this.active + 1} / ${this.matches.length}`;
+      }
+      const empty = this.matches.length === 0;
+      if (this.prev) this.prev.disabled = empty;
+      if (this.next) this.next.disabled = empty;
+    },
+
+    // 検索バーが表示されているときに入力欄へフォーカスし、既存の文字列を全選択する。
+    focus() {
+      if (!this.input || !this.input.isConnected) return false;
+      this.input.focus();
+      this.input.select();
+      return true;
+    },
+  };
+
+  // 検索バー (入力欄 + 件数 + 前後ボタン) を生成する。各レンダラーが app 直下へ追加する。
+  function makeSearchBar() {
+    const bar = el("div", "search-bar");
+    const input = el("input", "search-input");
+    input.type = "search";
+    input.placeholder = "検索…";
+    input.setAttribute("aria-label", "検索");
+    const count = el("span", "search-count");
+    const prev = el("button", "search-button", "\u2039");
+    prev.type = "button";
+    prev.title = "前の一致 (Shift+Enter)";
+    const next = el("button", "search-button", "\u203A");
+    next.type = "button";
+    next.title = "次の一致 (Enter)";
+
+    bar.appendChild(input);
+    bar.appendChild(count);
+    bar.appendChild(prev);
+    bar.appendChild(next);
+
+    input.addEventListener("input", () => search.run(input.value));
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        search.step(event.shiftKey ? -1 : 1);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        input.value = "";
+        search.run("");
+      }
+    });
+    prev.addEventListener("click", () => {
+      search.step(-1);
+      input.focus();
+    });
+    next.addEventListener("click", () => {
+      search.step(1);
+      input.focus();
+    });
+
+    search.input = input;
+    search.count = count;
+    search.prev = prev;
+    search.next = next;
+    return bar;
+  }
+
+  // 表示モデルから検索インデックスを構築する (id は DOM の data-search-id と一致させる)。
+  function buildSpreadsheetIndex(data, showSheet) {
+    const entries = [];
+    (data.sheets || []).forEach((sheet, sheetIndex) => {
+      (sheet.rows || []).forEach((row) => {
+        if (!row || row.index > SHEET_ROW_LIMIT) return;
+        (row.cells || []).forEach((cell) => {
+          if (!hasCellText(cell)) return;
+          entries.push({
+            id: `sheet${sheetIndex}-r${row.index}-c${cell.col}`,
+            text: String(cell.text),
+            navigate: () => showSheet(sheetIndex),
+          });
+        });
+      });
+    });
+    return entries;
+  }
+
+  function buildDocumentIndex(data) {
+    const entries = [];
+    (data.blocks || []).forEach((block, blockIndex) => {
+      if (block.kind === "image") return;
+      if (block.kind === "table") {
+        (block.cells || []).forEach((row, r) => {
+          (row || []).forEach((cell, c) => {
+            const text = cell.text || runsText(cell.runs);
+            if (text.trim() === "") return;
+            entries.push({ id: `doc-block${blockIndex}-r${r}-c${c}`, text });
+          });
+        });
+        return;
+      }
+      const text = block.text || runsText(block.runs);
+      if (text.trim() === "") return;
+      entries.push({ id: `doc-block${blockIndex}`, text });
+    });
+    return entries;
+  }
+
+  function buildPresentationIndex(data, showSlide) {
+    const entries = [];
+    (data.slides || []).forEach((slide, slideIndex) => {
+      const navigate = () => showSlide(slideIndex);
+      const textBoxes = slide.textBoxes || [];
+      if (textBoxes.length > 0) {
+        textBoxes.forEach((box, boxIndex) => {
+          (box.paragraphs || []).forEach((para, paraIndex) => {
+            const text = runsText(para.runs);
+            if (text.trim() === "") return;
+            entries.push({ id: `slide${slideIndex}-tb${boxIndex}-p${paraIndex}`, text, navigate });
+          });
+        });
+      } else {
+        if (slide.title) {
+          entries.push({ id: `slide${slideIndex}-title`, text: String(slide.title), navigate });
+        }
+        (slide.texts || []).forEach((text, textIndex) => {
+          if (String(text).trim() === "") return;
+          entries.push({ id: `slide${slideIndex}-text${textIndex}`, text: String(text), navigate });
+        });
+      }
+      (slide.tables || []).forEach((table, tableIndex) => {
+        (table.rows || []).forEach((row, r) => {
+          (row || []).forEach((cell, c) => {
+            const text = cell.text || runsText(cell.runs);
+            if (text.trim() === "") return;
+            entries.push({ id: `slide${slideIndex}-tbl${tableIndex}-r${r}-c${c}`, text, navigate });
+          });
+        });
+      });
+    });
+    return entries;
+  }
+
+  // -------------------------------------------------------------------------
   // スプレッドシート
   // -------------------------------------------------------------------------
   const ROW_HEADER_WIDTH = 48;
@@ -42,6 +285,7 @@
   const DEFAULT_ROW_HEIGHT = 15;
   const CELL_TEXT_PADDING = 6;
   const TRAILING_BLANK_COLUMNS = 20;
+  const SHEET_ROW_LIMIT = 2000;
   const PPT_EMU_PER_INCH = 914400;
   const PPT_EXPORT_DPI = 81;
   const PPT_EMU_PER_PIXEL = PPT_EMU_PER_INCH / PPT_EXPORT_DPI;
@@ -141,21 +385,24 @@
 
     const sheets = data.sheets || [];
     if (sheets.length === 0) {
+      search.reset([]);
       app.appendChild(el("div", "empty", "表示できるシートがありません。"));
       return;
     }
 
     const tabs = el("div", "tabs");
     const body = el("div", "sheet-body");
-    app.appendChild(body);
-    app.appendChild(tabs);
 
+    let activeSheet = -1;
     function showSheet(index) {
+      if (index === activeSheet) return;
+      activeSheet = index;
       Array.from(tabs.children).forEach((t, i) =>
         t.classList.toggle("active", i === index)
       );
       clear(body);
-      body.appendChild(buildSheetTable(sheets[index]));
+      body.appendChild(buildSheetTable(sheets[index], index));
+      search.applyHighlights();
     }
 
     sheets.forEach((sheet, i) => {
@@ -164,10 +411,15 @@
       tabs.appendChild(tab);
     });
 
+    app.appendChild(makeSearchBar());
+    app.appendChild(body);
+    app.appendChild(tabs);
+
+    search.reset(buildSpreadsheetIndex(data, showSheet));
     showSheet(0);
   }
 
-  function buildSheetTable(sheet) {
+  function buildSheetTable(sheet, sheetIndex) {
     const rows = sheet.rows || [];
     const images = sheet.images || [];
     const contentMaxCol = Math.max(sheet.maxCol || 0, ...images.map((image) => Math.max(image.col || 0, image.toCol || 0)));
@@ -180,7 +432,7 @@
     const maxDataRow = rows.reduce((max, row) => Math.max(max, row.index || 0), 0);
     const maxImageRow = images.reduce((max, image) => Math.max(max, (image.row || 0) + 1, (image.toRow || 0) + 1), 0);
     const maxRow = Math.max(maxDataRow, maxImageRow, 1);
-    const limit = Math.min(maxRow, 2000);
+    const limit = Math.min(maxRow, SHEET_ROW_LIMIT);
     const metrics = buildSheetMetrics(sheet, maxCol, limit, rowByIndex);
     const sheetWidth = ROW_HEADER_WIDTH + metrics.colOffsets[metrics.colOffsets.length - 1];
     const sheetHeight = COLUMN_HEADER_HEIGHT + metrics.rowOffsets[metrics.rowOffsets.length - 1];
@@ -251,6 +503,7 @@
             text.style.transform = "none";
           }
           appendCellText(text, cell);
+          td.dataset.searchId = `sheet${sheetIndex}-r${row.index}-c${c}`;
           td.title = String(cell.text);
           td.classList.add("has-value");
           td.appendChild(text);
@@ -299,20 +552,23 @@
 
     const blocks = data.blocks || [];
     if (blocks.length === 0) {
+      search.reset([]);
       app.appendChild(el("div", "empty", "表示できる内容がありません。"));
       return;
     }
 
+    app.appendChild(makeSearchBar());
     const page = el("div", "page");
-    blocks.forEach((block) => {
+    blocks.forEach((block, blockIndex) => {
       if (block.kind === "heading") {
         const level = Math.min(Math.max(block.level || 1, 1), 6);
         const h = el("h" + level, "heading");
+        h.dataset.searchId = `doc-block${blockIndex}`;
         if (block.align) h.style.textAlign = block.align;
         appendDocRuns(h, block);
         page.appendChild(h);
       } else if (block.kind === "table") {
-        page.appendChild(buildDocTable(block));
+        page.appendChild(buildDocTable(block, blockIndex));
       } else if (block.kind === "image") {
         const img = el("img", "doc-image");
         img.src = `data:${block.contentType};base64,${block.imageData}`;
@@ -321,6 +577,7 @@
         page.appendChild(img);
       } else {
         const p = el("p", "para");
+        p.dataset.searchId = `doc-block${blockIndex}`;
         if (block.align) p.style.textAlign = block.align;
         if (block.bullet) {
           p.classList.add("list-item");
@@ -333,6 +590,7 @@
       }
     });
     app.appendChild(page);
+    search.reset(buildDocumentIndex(data));
   }
 
   // 文書段落の run を装飾つきで描画する (run 内の改行は <br> へ展開)。
@@ -355,14 +613,14 @@
     });
   }
 
-  function buildDocTable(block) {
+  function buildDocTable(block, blockIndex) {
     const table = el("table", "doc-table");
     if (block.hasBorders) table.classList.add("bordered");
     const colOwner = {};
-    (block.cells || []).forEach((row) => {
+    (block.cells || []).forEach((row, r) => {
       const tr = el("tr");
       let col = 0;
-      (row || []).forEach((cell) => {
+      (row || []).forEach((cell, c) => {
         const span = Math.max(1, cell.gridSpan || 1);
         if (cell.vMergeContinue && colOwner[col]) {
           colOwner[col].rowSpan = (colOwner[col].rowSpan || 1) + 1;
@@ -370,6 +628,7 @@
           return;
         }
         const td = el("td");
+        td.dataset.searchId = `doc-block${blockIndex}-r${r}-c${c}`;
         if (span > 1) td.colSpan = span;
         appendDocRuns(td, cell);
         tr.appendChild(td);
@@ -390,21 +649,27 @@
 
     const slides = data.slides || [];
     if (slides.length === 0) {
+      search.reset([]);
       app.appendChild(el("div", "empty", "表示できるスライドがありません。"));
       return;
     }
 
+    const layout = el("div", "slide-layout");
     const list = el("aside", "slide-list");
     const stage = el("div", "slide-stage");
-    app.appendChild(list);
-    app.appendChild(stage);
+    layout.appendChild(list);
+    layout.appendChild(stage);
 
+    let activeSlide = -1;
     function showSlide(index) {
+      if (index === activeSlide) return;
+      activeSlide = index;
       Array.from(list.children).forEach((t, i) =>
         t.classList.toggle("active", i === index)
       );
       clear(stage);
-      stage.appendChild(buildSlide(slides[index]));
+      stage.appendChild(buildSlide(slides[index], index));
+      search.applyHighlights();
     }
 
     slides.forEach((slide, i) => {
@@ -415,10 +680,14 @@
       list.appendChild(item);
     });
 
+    app.appendChild(makeSearchBar());
+    app.appendChild(layout);
+
+    search.reset(buildPresentationIndex(data, showSlide));
     showSlide(0);
   }
 
-  function buildSlide(slide) {
+  function buildSlide(slide, slideIndex) {
     const card = el("div", "slide-card");
     const slideWidth = slide.width || 12192000;
     const slideHeight = slide.height || 6858000;
@@ -432,8 +701,8 @@
       card.appendChild(node);
     });
 
-    (slide.tables || []).forEach((table) => {
-      const node = buildSlideTable(table, slideWidth);
+    (slide.tables || []).forEach((table, tableIndex) => {
+      const node = buildSlideTable(table, slideWidth, slideIndex, tableIndex);
       placeSlideItem(node, table, slideWidth, slideHeight);
       card.appendChild(node);
     });
@@ -448,18 +717,24 @@
 
     const textBoxes = slide.textBoxes || [];
     if (textBoxes.length > 0) {
-      textBoxes.forEach((box) => {
+      textBoxes.forEach((box, boxIndex) => {
         const node = el("div", "slide-textbox");
         applySlideShapeStyle(node, box, slideWidth);
         applyTextBoxVAlign(node, box);
-        appendSlideParagraphs(node, box, slideWidth);
+        appendSlideParagraphs(node, box, slideWidth, slideIndex, boxIndex);
         placeSlideItem(node, box, slideWidth, slideHeight);
         card.appendChild(node);
       });
     } else {
-      if (slide.title) card.appendChild(el("h2", "slide-heading", slide.title));
-      (slide.texts || []).forEach((text) => {
-        card.appendChild(el("p", "slide-text", text));
+      if (slide.title) {
+        const heading = el("h2", "slide-heading", slide.title);
+        heading.dataset.searchId = `slide${slideIndex}-title`;
+        card.appendChild(heading);
+      }
+      (slide.texts || []).forEach((text, textIndex) => {
+        const p = el("p", "slide-text", text);
+        p.dataset.searchId = `slide${slideIndex}-text${textIndex}`;
+        card.appendChild(p);
       });
     }
     return card;
@@ -535,7 +810,7 @@
     return svg;
   }
 
-  function buildSlideTable(table, slideWidth) {
+  function buildSlideTable(table, slideWidth, slideIndex, tableIndex) {
     const wrap = el("div", "slide-table-wrap");
     const htmlTable = el("table", "slide-table");
     const columnWidths = table.columnWidths || [];
@@ -554,8 +829,9 @@
       const tr = el("tr");
       const rowHeight = rowHeights[rowIndex] || 0;
       if (rowHeight > 0 && rowSum > 0) tr.style.height = `${rowHeight / rowSum * 100}%`;
-      (row || []).forEach((cell) => {
+      (row || []).forEach((cell, cellIndex) => {
         const td = el("td", "slide-table-cell");
+        td.dataset.searchId = `slide${slideIndex}-tbl${tableIndex}-r${rowIndex}-c${cellIndex}`;
         if (cell.fillColor) td.style.backgroundColor = cell.fillColor;
         td.style.textAlign = cell.textAlign || "left";
         td.style.verticalAlign = cell.verticalAlign === "center" ? "middle" : (cell.verticalAlign === "bottom" ? "bottom" : "top");
@@ -574,9 +850,10 @@
   }
 
   // テキストボックスの段落を箇条書き・インデント・整列・行間つきで描画する。
-  function appendSlideParagraphs(node, box, slideWidth) {
-    (box.paragraphs || []).forEach((para) => {
+  function appendSlideParagraphs(node, box, slideWidth, slideIndex, boxIndex) {
+    (box.paragraphs || []).forEach((para, paraIndex) => {
       const p = el("div", "slide-para");
+      p.dataset.searchId = `slide${slideIndex}-tb${boxIndex}-p${paraIndex}`;
       p.style.textAlign = para.align || "left";
       if (para.lineSpace > 0) p.style.lineHeight = String(para.lineSpace);
       if (para.marginLeft > 0) p.style.paddingLeft = `${para.marginLeft / slideWidth * 100}cqw`;
@@ -645,6 +922,7 @@
   function renderError(data) {
     clear(app);
     app.className = "error";
+    search.reset([]);
     app.appendChild(el("div", "error-title", "ファイルを解析できませんでした"));
     app.appendChild(el("div", "error-detail", data.message || ""));
   }
@@ -665,6 +943,14 @@
         break;
     }
   }
+
+  // Ctrl+F / Cmd+F で検索バーの入力欄へフォーカスする (検索バーが表示されている場合のみ)。
+  window.addEventListener("keydown", (event) => {
+    const isFindKey = event.code === "KeyF" || event.key === "f" || event.key === "F";
+    if (isFindKey && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
+      if (search.focus()) event.preventDefault();
+    }
+  });
 
   window.addEventListener("message", (event) => {
     const message = event.data;

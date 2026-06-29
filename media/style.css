@@ -22,6 +22,91 @@ body {
   color: var(--vscode-descriptionForeground);
 }
 
+/* ---------------- 検索 ---------------- */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+  background-color: var(--vscode-editorWidget-background, #f3f3f3);
+}
+
+.document .search-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.search-input {
+  flex: 1 1 auto;
+  max-width: 360px;
+  padding: 3px 8px;
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  color: var(--vscode-input-foreground);
+  background-color: var(--vscode-input-background);
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.search-input:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+.search-count {
+  min-width: 60px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-descriptionForeground);
+}
+
+.search-button {
+  border: none;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: inherit;
+  background-color: transparent;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.search-button:hover:not(:disabled) {
+  background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+.search-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 一致した表示単位 (セル/段落/テキスト) を半透明のオーバーレイで強調する。
+   セルの塗りつぶし色 (インライン指定) を潰さないよう ::after を使う。 */
+.search-match {
+  position: relative;
+}
+
+.search-match::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-color: rgba(255, 213, 0, 0.38);
+}
+
+.search-active::after {
+  background-color: rgba(255, 141, 0, 0.55);
+}
+
+.search-active {
+  outline: 2px solid #ff8d00;
+  outline-offset: -1px;
+}
+
 /* ---------------- スプレッドシート ---------------- */
 .spreadsheet {
   display: flex;
@@ -236,7 +321,14 @@ table.doc-table.bordered td {
 /* ---------------- プレゼンテーション (PowerPoint) ---------------- */
 .presentation {
   display: flex;
+  flex-direction: column;
   height: 100vh;
+}
+
+.slide-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 
 .slide-list {
