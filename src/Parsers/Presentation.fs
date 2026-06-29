@@ -83,9 +83,46 @@ let private parseThemeColors (archive: Zip.ZipArchive) : Map<string, string> =
             |> Option.map (fun color -> name, color))
         |> Map.ofList
 
+/// テーマの major/minor フォント (+mj-lt 等の参照名 -> 実フォント名) を取得する。
+let private parseThemeFonts (archive: Zip.ZipArchive) : Map<string, string> =
+    match Zip.tryReadBytes archive "ppt/theme/theme1.xml" with
+    | None -> Map.empty
+    | Some bytes ->
+        let theme = Xml.parseBytes bytes
+        let group name =
+            Xml.descendantsByLocal name theme
+            |> Seq.tryHead
+            |> Option.map (fun g ->
+                let face child = Xml.tryChildByLocal child g |> Option.bind (Xml.attrLocal "typeface") |> Option.defaultValue ""
+                face "latin", face "ea", face "cs")
+        match group "majorFont", group "minorFont" with
+        | Some(mjLat, mjEa, mjCs), Some(mnLat, mnEa, mnCs) ->
+            let pick a b = if a <> "" then a else b
+            Map.ofList
+                [ "+mj-lt", mjLat
+                  "+mn-lt", mnLat
+                  "+mj-ea", pick mjEa mjLat
+                  "+mn-ea", pick mnEa mnLat
+                  "+mj-cs", pick mjCs mjLat
+                  "+mn-cs", pick mnCs mnLat ]
+        | _ -> Map.empty
+
+/// テーマフォント参照を解決するための表 (parse 開始時に設定)。
+let mutable private themeFonts: Map<string, string> = Map.empty
+
 let private colorMods (clr: Xml.XmlElement) =
     let m name = Xml.tryChildByLocal name clr |> Option.bind (attrFloat "val") |> Option.map (fun v -> v / 100000.0)
     m "lumMod", m "lumOff", m "shade", m "tint"
+
+/// <a:alpha> 子要素があれば不透明度 (0.0–1.0) を返す。
+let private alphaOf (clr: Xml.XmlElement) : float option =
+    Xml.tryChildByLocal "alpha" clr |> Option.bind (attrFloat "val") |> Option.map (fun v -> v / 100000.0)
+
+/// 色要素に alpha があれば rgba(...) へ、なければ hex のまま返す。
+let private applyAlpha (hex: string) (clr: Xml.XmlElement) : string =
+    match alphaOf clr, rgbOfHex hex with
+    | Some a, Some(r, g, b) when a < 1.0 -> sprintf "rgba(%d, %d, %d, %g)" r g b a
+    | _ -> hex
 
 let private childColor themeColors (fill: Xml.XmlElement) : string option =
     Xml.tryChildByLocal "srgbClr" fill
@@ -94,7 +131,7 @@ let private childColor themeColors (fill: Xml.XmlElement) : string option =
         |> Option.map normalizeColor
         |> Option.map (fun baseColor ->
             let lm, lo, sh, ti = colorMods c
-            applyColorMods baseColor lm lo sh ti))
+            applyAlpha (applyColorMods baseColor lm lo sh ti) c))
     |> Option.orElseWith (fun () ->
         Xml.tryChildByLocal "schemeClr" fill
         |> Option.bind (fun schemeClr ->
@@ -102,11 +139,13 @@ let private childColor themeColors (fill: Xml.XmlElement) : string option =
             |> Option.bind (fun key -> Map.tryFind (themeKey key) themeColors)
             |> Option.map (fun baseColor ->
                 let lm, lo, sh, ti = colorMods schemeClr
-                applyColorMods baseColor lm lo sh ti)))
+                applyAlpha (applyColorMods baseColor lm lo sh ti) schemeClr)))
     |> Option.orElseWith (fun () ->
         Xml.tryChildByLocal "sysClr" fill
-        |> Option.bind (Xml.attrLocal "lastClr")
-        |> Option.map normalizeColor)
+        |> Option.bind (fun sysClr ->
+            Xml.attrLocal "lastClr" sysClr
+            |> Option.map normalizeColor
+            |> Option.map (fun hex -> applyAlpha hex sysClr)))
 
 let private solidFillColor themeColors (el: Xml.XmlElement) : string option =
     Xml.tryChildByLocal "solidFill" el |> Option.bind (childColor themeColors)
@@ -140,23 +179,15 @@ let private geometryType (sp: Xml.XmlElement) : string =
     |> Option.bind (Xml.attrLocal "prst")
     |> Option.defaultValue "rect"
 
-/// prstGeom の調整値 (avLst の a:gd) を比率 (1.0 = 100%) で取り出す。
-let private adjustValue (sp: Xml.XmlElement) (name: string) (def: float) : float =
+/// prstGeom の調整値 (avLst の a:gd, adj1, adj2, ...) を順に比率 (1.0 = 100%) で取り出す。
+let private adjustmentsOf (sp: Xml.XmlElement) : float[] =
     Xml.descendantsByLocal "gd" sp
-    |> Seq.tryPick (fun gd ->
+    |> Seq.choose (fun gd ->
         match Xml.attrLocal "name" gd, Xml.attrLocal "fmla" gd with
-        | Some n, Some fmla when n = name && fmla.StartsWith "val " -> tryParseIntSigned (fmla.Substring 4) |> Option.map float
+        | Some n, Some fmla when n.StartsWith "adj" && fmla.StartsWith "val " ->
+            tryParseIntSigned (fmla.Substring 4) |> Option.map (fun v -> float v / 100000.0)
         | _ -> None)
-    |> Option.defaultValue def
-    |> fun v -> v / 100000.0
-
-/// 吹き出しのしっぽ位置 (中心からの比率)。geometry が吹き出しでなければ 0,0。
-let private calloutAdjust (sp: Xml.XmlElement) : float * float =
-    let geom = geometryType sp
-    if geom.Contains "Callout" && (geom.Contains "wedge" || geom.Contains "Wedge") then
-        adjustValue sp "adj1" -20833.0, adjustValue sp "adj2" 62500.0
-    else
-        0.0, 0.0
+    |> Array.ofSeq
 
 let private contentType (path: string) : string option =
     let lower = path.ToLower()
@@ -241,6 +272,15 @@ let private transformOpt (el: Xml.XmlElement) : (float * float * float * float) 
 let private transform (el: Xml.XmlElement) : float * float * float * float =
     transformOpt el |> Option.defaultValue (0.0, 0.0, 0.0, 0.0)
 
+/// xfrm の rot (60000 分の 1 度) を度で返す。未指定は 0。
+let private xfrmRot (el: Xml.XmlElement) : float =
+    Xml.descendantsByLocal "xfrm" el
+    |> Seq.tryHead
+    |> Option.bind (Xml.attrLocal "rot")
+    |> Option.bind tryParseIntSigned
+    |> Option.map (fun v -> float v / 60000.0)
+    |> Option.defaultValue 0.0
+
 let private placeholder (sp: Xml.XmlElement) : Xml.XmlElement option =
     Xml.descendantsByLocal "ph" sp |> Seq.tryHead
 
@@ -275,10 +315,16 @@ let private isTitleShape (sp: Xml.XmlElement) : bool =
 let private defaultRun : TextRun = { text = ""; bold = false; italic = false; underline = false; strike = false; fontSize = defaultTextSize; fontName = ""; color = "" }
 
 let private fontName (rPr: Xml.XmlElement) : string =
+    let resolve (name: string) = if name.StartsWith "+" then Map.tryFind name themeFonts |> Option.defaultValue "" else name
     Xml.tryChildByLocal "latin" rPr
     |> Option.bind (Xml.attrLocal "typeface")
-    |> Option.orElseWith (fun () -> Xml.tryChildByLocal "ea" rPr |> Option.bind (Xml.attrLocal "typeface"))
-    |> Option.filter (fun name -> not (name.StartsWith "+"))
+    |> Option.map resolve
+    |> Option.filter (fun name -> name <> "")
+    |> Option.orElseWith (fun () ->
+        Xml.tryChildByLocal "ea" rPr
+        |> Option.bind (Xml.attrLocal "typeface")
+        |> Option.map resolve
+        |> Option.filter (fun name -> name <> ""))
     |> Option.defaultValue ""
 
 let private runStyle (themeColors: Map<string, string>) (baseRun: TextRun) (text: string) (rPr: Xml.XmlElement option) : TextRun =
@@ -353,6 +399,21 @@ let private bodyPrAnchorOf (sp: Xml.XmlElement) : string option =
     |> Option.bind (Xml.tryChildByLocal "bodyPr")
     |> Option.bind (Xml.attrLocal "anchor")
 
+/// bodyPr の内側余白 (EMU)。未指定時は OOXML 既定 (l/r=91440, t/b=45720)。
+let private bodyPrInsets (sp: Xml.XmlElement) : float * float * float * float =
+    let bodyPr = Xml.tryChildByLocal "txBody" sp |> Option.bind (Xml.tryChildByLocal "bodyPr")
+    let ins name def = bodyPr |> Option.bind (attrFloat name) |> Option.defaultValue def
+    ins "lIns" 91440.0, ins "tIns" 45720.0, ins "rIns" 91440.0, ins "bIns" 45720.0
+
+/// normAutofit の fontScale (比率, 既定 1.0)。
+let private fontScaleOf (sp: Xml.XmlElement) : float =
+    Xml.tryChildByLocal "txBody" sp
+    |> Option.bind (Xml.tryChildByLocal "bodyPr")
+    |> Option.bind (Xml.tryChildByLocal "normAutofit")
+    |> Option.bind (attrFloat "fontScale")
+    |> Option.map (fun v -> v / 100000.0)
+    |> Option.defaultValue 1.0
+
 /// 1 段落 (a:p) を解析する。styleName は箇条書き/インデント継承元 (None なら継承なし)。
 let private buildParagraph (themeColors: Map<string, string>) (master: Xml.XmlElement option) (styleName: string option) (baseRun: TextRun) (p: Xml.XmlElement) : SlideParagraph =
     let pPr = Xml.tryChildByLocal "pPr" p
@@ -419,7 +480,11 @@ let private parseTextBox (themeColors: Map<string, string>) (archive: Zip.ZipArc
             let spPr = Xml.tryChildByLocal "spPr" sp
             let fillColor = spPr |> Option.bind (resolveFill themeColors archive basePath rels) |> Option.orElseWith (fun () -> styleFillColor themeColors sp) |> Option.defaultValue ""
             let directLineColor, lineWidth = spPr |> Option.map (lineStyle themeColors) |> Option.defaultValue ("", 0.0)
-            let lineColor = if directLineColor = "" then styleLineColor themeColors sp |> Option.defaultValue "" else directLineColor
+            let hasExplicitLn = spPr |> Option.bind (Xml.tryChildByLocal "ln") |> Option.isSome
+            let lineColor =
+                if directLineColor <> "" then directLineColor
+                elif hasExplicitLn then ""
+                else styleLineColor themeColors sp |> Option.defaultValue ""
             let anchor =
                 bodyPrAnchorOf sp
                 |> Option.orElseWith (fun () -> fallbackAnchor sp)
@@ -428,7 +493,8 @@ let private parseTextBox (themeColors: Map<string, string>) (archive: Zip.ZipArc
                     | "b" -> "bottom"
                     | _ -> "top")
                 |> Option.defaultValue "top"
-            let adj1, adj2 = calloutAdjust sp
+            let adjustments = adjustmentsOf sp
+            let il, it, ir, ib = bodyPrInsets sp
             Some
                 { x = x
                   y = y
@@ -441,14 +507,24 @@ let private parseTextBox (themeColors: Map<string, string>) (archive: Zip.ZipArc
                   lineWidth = lineWidth
                   shapeType = geometryType sp
                   verticalAlign = anchor
-                  adj1 = adj1
-                  adj2 = adj2 }
+                  adjustments = adjustments
+                  rot = xfrmRot sp
+                  insetL = il
+                  insetT = it
+                  insetR = ir
+                  insetB = ib
+                  fontScale = fontScaleOf sp
+                  z = 0 }
 
 let private parseShape (themeColors: Map<string, string>) (archive: Zip.ZipArchive) (basePath: string) (rels: Map<string, Opc.Relationship>) (fallbackTransform: Xml.XmlElement -> (float * float * float * float) option) (sp: Xml.XmlElement) : SlideShape option =
     let spPr = Xml.tryChildByLocal "spPr" sp
     let fillColor = spPr |> Option.bind (resolveFill themeColors archive basePath rels) |> Option.orElseWith (fun () -> styleFillColor themeColors sp) |> Option.defaultValue ""
     let directLineColor, lineWidth = spPr |> Option.map (lineStyle themeColors) |> Option.defaultValue ("", 0.0)
-    let lineColor = if directLineColor = "" then styleLineColor themeColors sp |> Option.defaultValue "" else directLineColor
+    let hasExplicitLn = spPr |> Option.bind (Xml.tryChildByLocal "ln") |> Option.isSome
+    let lineColor =
+        if directLineColor <> "" then directLineColor
+        elif hasExplicitLn then ""
+        else styleLineColor themeColors sp |> Option.defaultValue ""
     let hasText =
         match Xml.tryChildByLocal "txBody" sp with
         | Some txBody -> shapeParagraphs txBody |> List.exists (fun s -> s <> "")
@@ -457,7 +533,7 @@ let private parseShape (themeColors: Map<string, string>) (archive: Zip.ZipArchi
         None
     else
         let x, y, width, height = transformOpt sp |> Option.orElseWith (fun () -> fallbackTransform sp) |> Option.defaultValue (0.0, 0.0, 0.0, 0.0)
-        let adj1, adj2 = calloutAdjust sp
+        let adjustments = adjustmentsOf sp
         Some
             { x = x
               y = y
@@ -467,10 +543,31 @@ let private parseShape (themeColors: Map<string, string>) (archive: Zip.ZipArchi
               lineColor = lineColor
               lineWidth = lineWidth
               shapeType = geometryType sp
-              adj1 = adj1
-              adj2 = adj2 }
+              adjustments = adjustments
+              rot = xfrmRot sp
+              z = 0 }
 
-let private parseImage (ct: Opc.ContentTypes) (archive: Zip.ZipArchive) (slidePath: string) (rels: Map<string, Opc.Relationship>) (pic: Xml.XmlElement) : SlideImage option =
+/// pic の outerShdw を CSS box-shadow 用の生値 (色/EMU) に変換する。
+let private parseShadow (themeColors: Map<string, string>) (pic: Xml.XmlElement) : string * float * float * float =
+    match Xml.tryChildByLocal "spPr" pic |> Option.bind (Xml.tryChildByLocal "effectLst") |> Option.bind (Xml.tryChildByLocal "outerShdw") with
+    | None -> "", 0.0, 0.0, 0.0
+    | Some sh ->
+        let blur = attrFloat "blurRad" sh |> Option.defaultValue 0.0
+        let dist = attrFloat "dist" sh |> Option.defaultValue 0.0
+        let dirDeg = attrFloat "dir" sh |> Option.map (fun v -> v / 60000.0) |> Option.defaultValue 0.0
+        let color = childColor themeColors sh |> Option.defaultValue "rgba(0, 0, 0, 0.5)"
+        let rad = dirDeg * System.Math.PI / 180.0
+        color, blur, dist * cos rad, dist * sin rad
+
+/// blipFill の srcRect (1/1000%) を比率 (0.0–1.0) で取り出す (l, t, r, b)。
+let private srcRectCrop (pic: Xml.XmlElement) : float * float * float * float =
+    match Xml.descendantsByLocal "srcRect" pic |> Seq.tryHead with
+    | None -> 0.0, 0.0, 0.0, 0.0
+    | Some sr ->
+        let v name = attrFloat name sr |> Option.map (fun x -> x / 100000.0) |> Option.defaultValue 0.0
+        v "l", v "t", v "r", v "b"
+
+let private parseImage (themeColors: Map<string, string>) (ct: Opc.ContentTypes) (archive: Zip.ZipArchive) (slidePath: string) (rels: Map<string, Opc.Relationship>) (pic: Xml.XmlElement) : SlideImage option =
     let rid = Xml.descendantsByLocal "blip" pic |> Seq.tryPick (Xml.attrLocal "embed")
     match rid |> Option.bind (fun id -> Map.tryFind id rels) with
     | Some rel when rel.TargetMode <> "External" ->
@@ -478,6 +575,8 @@ let private parseImage (ct: Opc.ContentTypes) (archive: Zip.ZipArchive) (slidePa
         match imageDataCt ct archive target with
         | Some(mime, data) ->
             let x, y, width, height = transform pic
+            let shadowColor, shadowBlur, shadowOffX, shadowOffY = parseShadow themeColors pic
+            let cl, ctp, cr, cb = srcRectCrop pic
             Some
                 { x = x
                   y = y
@@ -485,7 +584,17 @@ let private parseImage (ct: Opc.ContentTypes) (archive: Zip.ZipArchive) (slidePa
                   height = height
                   altText = altText pic
                   contentType = mime
-                  data = data }
+                  data = data
+                  rot = xfrmRot pic
+                  shadowColor = shadowColor
+                  shadowBlur = shadowBlur
+                  shadowOffX = shadowOffX
+                  shadowOffY = shadowOffY
+                  cropL = cl
+                  cropT = ctp
+                  cropR = cr
+                  cropB = cb
+                  z = 0 }
         | None -> None
     | _ -> None
 
@@ -542,7 +651,8 @@ let private parseTable (themeColors: Map<string, string>) (frame: Xml.XmlElement
               height = height
               rows = rows
               columnWidths = columnWidths
-              rowHeights = rowHeights }
+              rowHeights = rowHeights
+              z = 0 }
 
 let private parseSlideSize (pres: Xml.XmlElement) : float * float =
     match Xml.tryChildByLocal "sldSz" pres with
@@ -552,11 +662,14 @@ let private parseSlideSize (pres: Xml.XmlElement) : float * float =
         width, height
     | None -> defaultSlideWidth, defaultSlideHeight
 
-let private parseBackground (themeColors: Map<string, string>) (archive: Zip.ZipArchive) (basePath: string) (rels: Map<string, Opc.Relationship>) (root: Xml.XmlElement) : string =
-    Xml.descendantsByLocal "bgPr" root
-    |> Seq.tryHead
-    |> Option.bind (resolveFill themeColors archive basePath rels)
-    |> Option.defaultValue "#FFFFFF"
+let private parseBackground (themeColors: Map<string, string>) (archive: Zip.ZipArchive) (basePath: string) (rels: Map<string, Opc.Relationship>) (root: Xml.XmlElement) : string option =
+    match Xml.descendantsByLocal "bg" root |> Seq.tryHead with
+    | None -> None
+    | Some bg ->
+        Xml.descendantsByLocal "bgPr" bg
+        |> Seq.tryHead
+        |> Option.bind (resolveFill themeColors archive basePath rels)
+        |> Option.orElseWith (fun () -> Xml.tryChildByLocal "bgRef" bg |> Option.bind (childColor themeColors))
 
 let private readXmlPart (archive: Zip.ZipArchive) (path: string) : Xml.XmlElement option =
     Zip.tryReadBytes archive path |> Option.map Xml.parseBytes
@@ -567,7 +680,7 @@ let private showMasterShapes (el: Xml.XmlElement option) : bool =
     |> Option.map (fun v -> v <> "0" && v.ToLower() <> "false")
     |> Option.defaultValue true
 
-let private loadLayoutAndMaster (archive: Zip.ZipArchive) (slidePath: string) : Xml.XmlElement option * Xml.XmlElement option =
+let private loadLayoutAndMaster (archive: Zip.ZipArchive) (slidePath: string) : (Xml.XmlElement option * string) * (Xml.XmlElement option * string) =
     let slideRels = Opc.loadRels archive slidePath
     let layoutPath =
         slideRels
@@ -576,7 +689,7 @@ let private loadLayoutAndMaster (archive: Zip.ZipArchive) (slidePath: string) : 
             if rel.Type.EndsWith "/slideLayout" && rel.TargetMode <> "External" then Some(Opc.resolveTarget slidePath rel.Target)
             else None)
     match layoutPath with
-    | None -> None, None
+    | None -> (None, ""), (None, "")
     | Some layoutPath ->
         let layout = readXmlPart archive layoutPath
         let masterPath =
@@ -585,7 +698,8 @@ let private loadLayoutAndMaster (archive: Zip.ZipArchive) (slidePath: string) : 
             |> Seq.tryPick (fun (_, rel) ->
                 if rel.Type.EndsWith "/slideMaster" && rel.TargetMode <> "External" then Some(Opc.resolveTarget layoutPath rel.Target)
                 else None)
-        layout, (masterPath |> Option.bind (readXmlPart archive))
+        let master = masterPath |> Option.bind (readXmlPart archive)
+        (layout, layoutPath), (master, masterPath |> Option.defaultValue "")
 
 let private placeholderShapes (roots: Xml.XmlElement option list) : Xml.XmlElement[] =
     roots
@@ -603,7 +717,7 @@ let private inheritedDecorations (themeColors: Map<string, string>) (archive: Zi
 /// 1 枚のスライドを解析する。
 let private parseSlide (archive: Zip.ZipArchive) (ct: Opc.ContentTypes) (themeColors: Map<string, string>) (slidePath: string) (slideWidth: float) (slideHeight: float) (index: int) (root: Xml.XmlElement) : Slide =
     let rels = Opc.loadRels archive slidePath
-    let layout, master = loadLayoutAndMaster archive slidePath
+    let (layout, layoutPath), (master, masterPath) = loadLayoutAndMaster archive slidePath
     let includeMaster = showMasterShapes (Some root) && showMasterShapes layout
     let inheritanceRoots = if includeMaster then [ layout; master ] else [ layout ]
     let inheritedPlaceholders = placeholderShapes inheritanceRoots
@@ -621,6 +735,14 @@ let private parseSlide (archive: Zip.ZipArchive) (ct: Opc.ContentTypes) (themeCo
     let shapeAcc = System.Collections.Generic.List<SlideShape>()
     let imageAcc = System.Collections.Generic.List<SlideImage>()
     let tableAcc = System.Collections.Generic.List<SlideTable>()
+    // マスター/レイアウト由来の装飾図形は背景 (最下層) に置くため低い z を付与し、
+    // スライド本体の要素はその上からドキュメント順 (z++) で重ねる。
+    let inheritedShapes = inheritedDecorations themeColors archive inheritanceRoots |> Array.mapi (fun i s -> { s with z = i })
+    let mutable zCounter = inheritedShapes.Length
+    let bumpZ () =
+        let v = zCounter
+        zCounter <- zCounter + 1
+        v
     let applyBox (f: float * float * float * float -> float * float * float * float) (b: SlideTextBox) =
         let x, y, w, h = f (b.x, b.y, b.width, b.height)
         { b with x = x; y = y; width = w; height = h }
@@ -655,18 +777,18 @@ let private parseSlide (archive: Zip.ZipArchive) (ct: Opc.ContentTypes) (themeCo
             match Xml.localName child.Name with
             | "sp" ->
                 match parseTextBoxFor child with
-                | Some tb -> textBoxAcc.Add(applyBox toAbs tb)
+                | Some tb -> textBoxAcc.Add({ (applyBox toAbs tb) with z = bumpZ () })
                 | None ->
                     match parseShape themeColors archive slidePath rels fallbackTransform child with
-                    | Some s -> shapeAcc.Add(applyShapeXf toAbs s)
+                    | Some s -> shapeAcc.Add({ (applyShapeXf toAbs s) with z = bumpZ () })
                     | None -> ()
             | "pic" ->
-                match parseImage ct archive slidePath rels child with
-                | Some im -> imageAcc.Add(applyImageXf toAbs im)
+                match parseImage themeColors ct archive slidePath rels child with
+                | Some im -> imageAcc.Add({ (applyImageXf toAbs im) with z = bumpZ () })
                 | None -> ()
             | "graphicFrame" ->
                 match parseTable themeColors child with
-                | Some t -> tableAcc.Add(applyTableXf toAbs t)
+                | Some t -> tableAcc.Add({ (applyTableXf toAbs t) with z = bumpZ () })
                 | None -> ()
             | "grpSp" -> walk (groupMap toAbs child) child
             | _ -> ()
@@ -675,10 +797,14 @@ let private parseSlide (archive: Zip.ZipArchive) (ct: Opc.ContentTypes) (themeCo
     | None -> ()
 
     let textBoxes = textBoxAcc.ToArray()
-    let shapes = Array.append (inheritedDecorations themeColors archive inheritanceRoots) (shapeAcc.ToArray())
+    let shapes = Array.append inheritedShapes (shapeAcc.ToArray())
     let images = imageAcc.ToArray()
     let tables = tableAcc.ToArray()
-    let backgroundColor = parseBackground themeColors archive slidePath rels root
+    let backgroundColor =
+        [ Some root, slidePath; layout, layoutPath; master, masterPath ]
+        |> List.tryPick (fun (rootOpt, path) ->
+            rootOpt |> Option.bind (fun r -> parseBackground themeColors archive path (Opc.loadRels archive path) r))
+        |> Option.defaultValue "#FFFFFF"
     let title =
         shapeElements
         |> Array.tryPick (fun sp ->
@@ -693,6 +819,7 @@ let private parseSlide (archive: Zip.ZipArchive) (ct: Opc.ContentTypes) (themeCo
 let parse (data: byte[]) : PresentationData =
     let archive = Zip.read data
     let themeColors = parseThemeColors archive
+    themeFonts <- parseThemeFonts archive
     let contentTypes = Opc.loadContentTypes archive
     let presentationPath = Opc.officeDocumentPath archive |> Option.defaultValue "ppt/presentation.xml"
     let rels = Opc.loadRels archive presentationPath

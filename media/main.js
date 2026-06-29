@@ -694,38 +694,54 @@
     card.style.aspectRatio = `${slideWidth} / ${slideHeight}`;
     applyFillStyle(card, slide.backgroundColor);
 
+    const textBoxes = slide.textBoxes || [];
+
+    // 全要素を 1 つのリストに集め、解析時に付与した z (ドキュメント順) で重ねる。
+    // data-search-id は z ソート後の順ではなく型ごとの元 index を使う点に注意。
+    const entries = [];
+
     (slide.shapes || []).forEach((shape) => {
-      const node = el("div", "slide-shape");
-      applySlideShapeStyle(node, shape, slideWidth);
-      placeSlideItem(node, shape, slideWidth, slideHeight);
-      card.appendChild(node);
+      entries.push({ z: shape.z || 0, build: () => {
+        const node = el("div", "slide-shape");
+        applySlideShapeStyle(node, shape, slideWidth);
+        placeSlideItem(node, shape, slideWidth, slideHeight);
+        return node;
+      } });
     });
 
     (slide.tables || []).forEach((table, tableIndex) => {
-      const node = buildSlideTable(table, slideWidth, slideIndex, tableIndex);
-      placeSlideItem(node, table, slideWidth, slideHeight);
-      card.appendChild(node);
+      entries.push({ z: table.z || 0, build: () => {
+        const node = buildSlideTable(table, slideWidth, slideIndex, tableIndex);
+        placeSlideItem(node, table, slideWidth, slideHeight);
+        return node;
+      } });
     });
 
     (slide.images || []).forEach((image) => {
-      const img = el("img", "slide-image");
-      img.alt = image.altText || "";
-      img.src = `data:${image.contentType};base64,${image.data}`;
-      placeSlideItem(img, image, slideWidth, slideHeight);
-      card.appendChild(img);
+      entries.push({ z: image.z || 0, build: () => buildSlideImage(image, slideWidth, slideHeight) });
     });
 
-    const textBoxes = slide.textBoxes || [];
     if (textBoxes.length > 0) {
       textBoxes.forEach((box, boxIndex) => {
-        const node = el("div", "slide-textbox");
-        applySlideShapeStyle(node, box, slideWidth);
-        applyTextBoxVAlign(node, box);
-        appendSlideParagraphs(node, box, slideWidth, slideIndex, boxIndex);
-        placeSlideItem(node, box, slideWidth, slideHeight);
-        card.appendChild(node);
+        entries.push({ z: box.z || 0, build: () => {
+          const node = el("div", "slide-textbox");
+          applySlideShapeStyle(node, box, slideWidth);
+          applyTextBoxVAlign(node, box);
+          applyTextBoxInsets(node, box, slideWidth);
+          appendSlideParagraphs(node, box, slideWidth, slideIndex, boxIndex);
+          placeSlideItem(node, box, slideWidth, slideHeight);
+          return node;
+        } });
       });
-    } else {
+    }
+
+    // z 昇順で安定ソート (同 z は型の列挙順を保持) し、その順に重ねる。
+    entries
+      .map((entry, order) => ({ entry, order }))
+      .sort((a, b) => (a.entry.z - b.entry.z) || (a.order - b.order))
+      .forEach(({ entry }) => card.appendChild(entry.build()));
+
+    if (textBoxes.length === 0) {
       if (slide.title) {
         const heading = el("h2", "slide-heading", slide.title);
         heading.dataset.searchId = `slide${slideIndex}-title`;
@@ -740,24 +756,99 @@
     return card;
   }
 
+  // 画像を枠 (frame) で配置する。srcRect クロップ・object-fit:fill・outerShdw 影・回転を反映する。
+  function buildSlideImage(image, slideWidth, slideHeight) {
+    const l = image.cropL || 0;
+    const t = image.cropT || 0;
+    const r = image.cropR || 0;
+    const b = image.cropB || 0;
+    const hasCrop = l + r > 0 || t + b > 0;
+
+    const img = el("img", "slide-image");
+    img.alt = image.altText || "";
+    img.src = `data:${image.contentType};base64,${image.data}`;
+
+    let outer = img;
+    if (hasCrop) {
+      const frame = el("div", "slide-image-frame");
+      const sw = Math.max(0.001, 1 - l - r);
+      const sh = Math.max(0.001, 1 - t - b);
+      img.style.position = "absolute";
+      img.style.width = `${100 / sw}%`;
+      img.style.height = `${100 / sh}%`;
+      img.style.left = `${(-l / sw) * 100}%`;
+      img.style.top = `${(-t / sh) * 100}%`;
+      frame.appendChild(img);
+      outer = frame;
+    }
+
+    if (image.shadowColor) {
+      const ox = emuToCqw(image.shadowOffX || 0, slideWidth);
+      const oy = emuToCqw(image.shadowOffY || 0, slideWidth);
+      const blur = emuToCqw(image.shadowBlur || 0, slideWidth);
+      outer.style.boxShadow = `${ox}cqw ${oy}cqw ${blur}cqw ${image.shadowColor}`;
+    }
+
+    placeSlideItem(outer, image, slideWidth, slideHeight);
+    return outer;
+  }
+
   function applySlideShapeStyle(node, item, slideWidth) {
     const shapeType = item.shapeType || "rect";
     const t = shapeType.toLowerCase();
     node.dataset.shapeType = shapeType;
-    const isCallout = t.includes("callout");
-    if (isCallout && (item.adj1 || item.adj2)) {
+    const adj = item.adjustments || [];
+
+    // 線吹き出し (callout1/2/3 系): 引き出し線のみを描画し、本体には枠を付けない。
+    if (isLineCallout(t)) {
       node.classList.add("slide-shape-callout");
       node.style.overflow = "visible";
-      node.appendChild(buildCalloutSvg(item));
+      const svg = buildLineCalloutSvg(item, adj);
+      if (svg) node.appendChild(svg);
       return;
     }
-    node.classList.toggle("slide-shape-ellipse", t.includes("ellipse") && !isCallout);
+
+    // 吹き出し (wedge*Callout): 角丸/矩形/楕円のフキダシ本体 + しっぽ。
+    if (t.includes("callout")) {
+      node.classList.add("slide-shape-callout");
+      node.style.overflow = "visible";
+      node.appendChild(buildWedgeCalloutSvg(item, adj));
+      return;
+    }
+
+    // 直線/コネクタ: バウンディングボックスの対角線を描く。
+    if (isLineShape(t)) {
+      node.style.overflow = "visible";
+      node.appendChild(buildLineSvg(item));
+      return;
+    }
+
+    if (t.includes("ellipse")) {
+      node.classList.add("slide-shape-ellipse");
+    } else if (t.includes("roundrect")) {
+      node.style.borderRadius = roundRectRadiusCqw(item, slideWidth, adj);
+    }
     applyFillStyle(node, item.fillColor);
     if (item.lineColor) {
       node.style.borderColor = item.lineColor;
       node.style.borderStyle = "solid";
       node.style.borderWidth = `${pointToSlidePx(item.lineWidth || 1) / emuToSlidePx(slideWidth) * 100}cqw`;
     }
+  }
+
+  function isLineCallout(t) {
+    return /callout[123]$/.test(t);
+  }
+
+  function isLineShape(t) {
+    return t === "line" || t.indexOf("connector") >= 0;
+  }
+
+  // roundRect の角丸半径 (短辺基準) を cqw で返す。avLst 既定は 16.667%。
+  function roundRectRadiusCqw(item, slideWidth, adj) {
+    const ratio = adj.length > 0 ? adj[0] : 0.16667;
+    const minSide = Math.min(item.width || 0, item.height || 0);
+    return `${emuToCqw(minSide * ratio, slideWidth)}cqw`;
   }
 
   // 塗り値 (色 / グラデーション / 画像 url) を適切な CSS プロパティへ割り当てる。
@@ -767,46 +858,130 @@
     else node.style.background = value;
   }
 
-  // SVG の fill 属性用に塗り値を解決する (グラデーション文字列からは最初の色を抽出)。
+  // SVG の fill / stroke 用に塗り値を解決する (rgb/rgba はそのまま、グラデーションは先頭色)。
   function svgFill(value) {
     if (!value) return "transparent";
     if (value[0] === "#") return value;
+    if (value.indexOf("rgb") === 0) return value;
     const m = value.match(/#[0-9a-fA-F]{6}/);
     return m ? m[0] : "#cccccc";
   }
 
-  // wedgeEllipseCallout を ECMA-376 の幾何 (楕円 + しっぽ) に従って SVG で描画する。
-  function buildCalloutSvg(item) {
-    const ns = "http://www.w3.org/2000/svg";
+  function svgEl(name, attrs) {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+    for (const key in attrs) {
+      const v = attrs[key];
+      if (v !== undefined && v !== null && v !== "") node.setAttribute(key, String(v));
+    }
+    return node;
+  }
+
+  // viewBox 0..100 (横) × 0..vbH (縦) の SVG を作る。preserveAspectRatio=none で枠に追従。
+  function newShapeSvg(vbH) {
+    return svgEl("svg", { class: "slide-shape-svg", viewBox: `0 0 100 ${vbH}`, preserveAspectRatio: "none" });
+  }
+
+  function strokeWidthOf(item, w) {
+    return (item.lineWidth > 0 ? item.lineWidth : 1) * 1270000 / w;
+  }
+
+  // 線吹き出し (callout1/2/3): avLst の (y,x) ペアを折れ線として描く。x は負値で枠外へ伸びる。
+  function buildLineCalloutSvg(item, adj) {
+    if (adj.length < 4) return null;
     const w = item.width || 1;
     const h = item.height || 1;
-    const vbH = 100 * h / w; // viewBox を縦横同一スケールに保つ
-    const cx = 50;
-    const cy = vbH / 2;
-    const rx = 50;
-    const ry = vbH / 2;
-    const tipX = cx + (item.adj1 || 0) * 100;
-    const tipY = cy + (item.adj2 || 0) * vbH;
-    const pang = Math.atan2(item.adj2 || 0, item.adj1 || 0);
-    const half = 11 * Math.PI / 180; // 吹き出し基部の半角 (660000/60000 度)
-    const b1x = cx + rx * Math.cos(pang - half);
-    const b1y = cy + ry * Math.sin(pang - half);
-    const b2x = cx + rx * Math.cos(pang + half);
-    const b2y = cy + ry * Math.sin(pang + half);
-    const d = `M ${b1x} ${b1y} L ${tipX} ${tipY} L ${b2x} ${b2y} A ${rx} ${ry} 0 1 1 ${b1x} ${b1y} Z`;
-    const svg = document.createElementNS(ns, "svg");
-    svg.setAttribute("class", "slide-shape-svg");
-    svg.setAttribute("viewBox", `0 0 100 ${vbH}`);
-    svg.setAttribute("preserveAspectRatio", "none");
-    const path = document.createElementNS(ns, "path");
-    path.setAttribute("d", d);
-    path.setAttribute("fill", svgFill(item.fillColor));
-    if (item.lineColor) {
-      path.setAttribute("stroke", item.lineColor);
-      path.setAttribute("stroke-width", String((item.lineWidth > 0 ? item.lineWidth : 1) * 1270000 / w));
-      path.setAttribute("stroke-linejoin", "round");
+    const vbH = 100 * h / w;
+    const pts = [];
+    for (let i = 0; i + 1 < adj.length; i += 2) {
+      pts.push(`${adj[i + 1] * 100},${adj[i] * vbH}`);
     }
-    svg.appendChild(path);
+    const svg = newShapeSvg(vbH);
+    svg.appendChild(svgEl("polyline", {
+      points: pts.join(" "),
+      fill: "none",
+      stroke: item.lineColor || "#595959",
+      "stroke-width": strokeWidthOf(item, w),
+      "stroke-linejoin": "round",
+      "stroke-linecap": "round",
+    }));
+    return svg;
+  }
+
+  // 直線/コネクタ: 枠の対角線を描く (flip 非対応の近似)。
+  function buildLineSvg(item) {
+    const w = item.width || 1;
+    const h = item.height || 1;
+    const vbH = 100 * h / w;
+    const svg = newShapeSvg(vbH);
+    svg.appendChild(svgEl("line", {
+      x1: 0, y1: 0, x2: 100, y2: vbH,
+      stroke: item.lineColor || "#000000",
+      "stroke-width": strokeWidthOf(item, w),
+      "stroke-linecap": "round",
+    }));
+    return svg;
+  }
+
+  function roundedRectPath(x, y, w, h, r) {
+    r = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+    return `M ${x + r} ${y} H ${x + w - r} A ${r} ${r} 0 0 1 ${x + w} ${y + r}` +
+      ` V ${y + h - r} A ${r} ${r} 0 0 1 ${x + w - r} ${y + h}` +
+      ` H ${x + r} A ${r} ${r} 0 0 1 ${x} ${y + h - r}` +
+      ` V ${y + r} A ${r} ${r} 0 0 1 ${x + r} ${y} Z`;
+  }
+
+  // 中心 (cx,cy) から方向 (dx,dy) のレイが矩形 [0,w]×[0,h] と交わる点。
+  function rectEdgePoint(cx, cy, w, h, dx, dy) {
+    const tx = dx > 0 ? (w - cx) / dx : (dx < 0 ? -cx / dx : Infinity);
+    const ty = dy > 0 ? (h - cy) / dy : (dy < 0 ? -cy / dy : Infinity);
+    const tt = Math.min(tx, ty);
+    return [cx + dx * tt, cy + dy * tt];
+  }
+
+  // wedge*Callout: 矩形/角丸/楕円の本体 + tip へ向かうしっぽ。alpha 付き塗りにも対応。
+  function buildWedgeCalloutSvg(item, adj) {
+    const t = (item.shapeType || "").toLowerCase();
+    const w = item.width || 1;
+    const h = item.height || 1;
+    const vbH = 100 * h / w;
+    const adj1 = adj.length > 0 ? adj[0] : -0.20833;
+    const adj2 = adj.length > 1 ? adj[1] : 0.625;
+    const tipX = 50 + adj1 * 100;
+    const tipY = vbH / 2 + adj2 * vbH;
+    const fill = svgFill(item.fillColor);
+    const stroke = item.lineColor || "";
+    const strokeW = strokeWidthOf(item, w);
+    const svg = newShapeSvg(vbH);
+
+    if (t.includes("ellipse")) {
+      const cx = 50, cy = vbH / 2, rx = 50, ry = vbH / 2;
+      const pang = Math.atan2(adj2, adj1);
+      const half = 11 * Math.PI / 180;
+      const b1x = cx + rx * Math.cos(pang - half);
+      const b1y = cy + ry * Math.sin(pang - half);
+      const b2x = cx + rx * Math.cos(pang + half);
+      const b2y = cy + ry * Math.sin(pang + half);
+      const d = `M ${b1x} ${b1y} L ${tipX} ${tipY} L ${b2x} ${b2y} A ${rx} ${ry} 0 1 1 ${b1x} ${b1y} Z`;
+      svg.appendChild(svgEl("path", { d, fill, stroke, "stroke-width": stroke ? strokeW : undefined, "stroke-linejoin": "round" }));
+      return svg;
+    }
+
+    // 角丸/矩形のフキダシ本体
+    const radius = t.includes("round") ? (adj.length > 2 ? adj[2] : 0.16667) * Math.min(100, vbH) : 0;
+    svg.appendChild(svgEl("path", { d: roundedRectPath(0, 0, 100, vbH, radius), fill, stroke, "stroke-width": stroke ? strokeW : undefined, "stroke-linejoin": "round" }));
+
+    // しっぽ: 本体の最寄り辺から tip へ。塗りは本体と同色 (枠線は付けない)。
+    const dx = tipX - 50;
+    const dy = tipY - vbH / 2;
+    if (dx !== 0 || dy !== 0) {
+      const edge = rectEdgePoint(50, vbH / 2, 100, vbH, dx, dy);
+      const len = Math.hypot(dx, dy) || 1;
+      const px = -dy / len;
+      const py = dx / len;
+      const baseHalf = Math.min(100, vbH) * 0.1;
+      const tail = `M ${edge[0] + px * baseHalf} ${edge[1] + py * baseHalf} L ${tipX} ${tipY} L ${edge[0] - px * baseHalf} ${edge[1] - py * baseHalf} Z`;
+      svg.appendChild(svgEl("path", { d: tail, fill }));
+    }
     return svg;
   }
 
@@ -873,7 +1048,7 @@
             p.appendChild(el("br"));
           } else {
             const span = el("span", "text-run", String(run.text));
-            applySlideRunStyle(span, run, slideWidth);
+            applySlideRunStyle(span, run, slideWidth, box.fontScale);
             p.appendChild(span);
           }
         });
@@ -904,16 +1079,33 @@
     }
   }
 
+  function emuToCqw(emu, slideWidth) {
+    return (emu || 0) / slideWidth * 100;
+  }
+
+  // bodyPr の内側余白 (EMU) を padding (cqw) として反映する。
+  function applyTextBoxInsets(node, box, slideWidth) {
+    if (box.insetL !== undefined) node.style.paddingLeft = `${emuToCqw(box.insetL, slideWidth)}cqw`;
+    if (box.insetT !== undefined) node.style.paddingTop = `${emuToCqw(box.insetT, slideWidth)}cqw`;
+    if (box.insetR !== undefined) node.style.paddingRight = `${emuToCqw(box.insetR, slideWidth)}cqw`;
+    if (box.insetB !== undefined) node.style.paddingBottom = `${emuToCqw(box.insetB, slideWidth)}cqw`;
+  }
+
   function placeSlideItem(node, item, slideWidth, slideHeight) {
     node.style.left = `${(item.x || 0) / slideWidth * 100}%`;
     node.style.top = `${(item.y || 0) / slideHeight * 100}%`;
     node.style.width = `${(item.width || 0) / slideWidth * 100}%`;
     node.style.height = `${(item.height || 0) / slideHeight * 100}%`;
+    if (item.rot) {
+      node.style.transform = `rotate(${item.rot}deg)`;
+      node.style.transformOrigin = "center center";
+    }
   }
 
-  function applySlideRunStyle(node, run, slideWidth) {
+  function applySlideRunStyle(node, run, slideWidth, fontScale) {
     applyRunStyle(node, run);
-    if (run.fontSize > 0) node.style.fontSize = `${pointToSlidePx(run.fontSize) / emuToSlidePx(slideWidth) * 100}cqw`;
+    const scale = fontScale || 1;
+    if (run.fontSize > 0) node.style.fontSize = `${pointToSlidePx(run.fontSize * scale) / emuToSlidePx(slideWidth) * 100}cqw`;
   }
 
   // -------------------------------------------------------------------------

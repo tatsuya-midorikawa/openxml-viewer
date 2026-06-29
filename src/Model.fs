@@ -127,8 +127,14 @@ type SlideTextBox =
       lineWidth: float
       shapeType: string
       verticalAlign: string
-      adj1: float
-      adj2: float }
+      adjustments: float[]
+      rot: float
+      insetL: float
+      insetT: float
+      insetR: float
+      insetB: float
+      fontScale: float
+      z: int }
 
 /// スライド上に配置された図形。
 type SlideShape =
@@ -140,8 +146,9 @@ type SlideShape =
       lineColor: string
       lineWidth: float
       shapeType: string
-      adj1: float
-      adj2: float }
+      adjustments: float[]
+      rot: float
+      z: int }
 
 /// スライド上に配置された表セル。
 type SlideTableCell =
@@ -159,7 +166,8 @@ type SlideTable =
       height: float
       rows: SlideTableCell[][]
       columnWidths: float[]
-      rowHeights: float[] }
+      rowHeights: float[]
+      z: int }
 
 /// スライド上に配置された画像。
 type SlideImage =
@@ -169,7 +177,17 @@ type SlideImage =
       height: float
       altText: string
       contentType: string
-      data: string }
+      data: string
+      rot: float
+      shadowColor: string
+      shadowBlur: float
+      shadowOffX: float
+      shadowOffY: float
+      cropL: float
+      cropT: float
+      cropR: float
+      cropB: float
+      z: int }
 
 /// スライド。
 type Slide =

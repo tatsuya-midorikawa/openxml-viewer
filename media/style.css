@@ -407,6 +407,7 @@ table.doc-table.bordered td {
 
 .slide-shape,
 .slide-image,
+.slide-image-frame,
 .slide-textbox {
   position: absolute;
 }
@@ -430,14 +431,17 @@ table.doc-table.bordered td {
 }
 
 .slide-image {
-  object-fit: contain;
+  object-fit: fill;
+}
+
+.slide-image-frame {
+  overflow: hidden;
 }
 
 .slide-textbox {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  padding: 0.5% 1%;
   overflow: hidden;
   color: #000;
   line-height: 1.15;
