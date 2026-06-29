@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-06-29
+
+### Fixed
+
+- ダークテーマ（`Dark+` など）選択時にプレビュー背景が黒くなる問題を修正。背景色が指定されていない場合の既定背景を `#fdfdfd` に固定。
+
 ## [0.0.1] - 2026-06-29
 
 ### Added
@@ -18,5 +24,6 @@
 - 設定項目（最大描画行数・グリッド線・画像表示・サムネイル・配色テーマ）。
 - Content Security Policy（CSP）による安全なオフライン閲覧。
 
-[Unreleased]: https://github.com/tatsuya-midorikawa/openxml-viewer/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/tatsuya-midorikawa/openxml-viewer/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/tatsuya-midorikawa/openxml-viewer/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/tatsuya-midorikawa/openxml-viewer/releases/tag/v0.0.1

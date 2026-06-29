@@ -10,8 +10,10 @@ body {
   padding: 0;
   font-family: var(--vscode-font-family);
   font-size: var(--vscode-font-size, 13px);
-  color: var(--vscode-foreground);
-  background-color: var(--vscode-editor-background);
+  /* ダーク テーマでも文書を紙のように表示するため、既定の前景色・背景色を固定する。
+     文書固有の色 (セル塗り・スライド背景・文字色) は各要素のインライン指定で上書きされる。 */
+  color: #1f1f1f;
+  background-color: #fdfdfd;
 }
 
 #app.loading,
@@ -252,7 +254,7 @@ table.doc-table.bordered td {
   text-align: left;
   border: 1px solid transparent;
   background-color: transparent;
-  color: var(--vscode-foreground);
+  color: inherit;
   padding: 8px;
   margin-bottom: 4px;
   border-radius: 4px;
