@@ -1,0 +1,29 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="256" height="256" rx="48" fill="#1F2430"/>
+  <!-- PowerPoint card (back) -->
+  <g transform="rotate(-12 128 132)">
+    <rect x="66" y="58" width="120" height="148" rx="12" fill="#C43E1C"/>
+    <rect x="84" y="92" width="84" height="12" rx="6" fill="#FFFFFF" opacity="0.85"/>
+    <rect x="84" y="116" width="64" height="12" rx="6" fill="#FFFFFF" opacity="0.55"/>
+  </g>
+  <!-- Word card (middle) -->
+  <g transform="rotate(-3 128 132)">
+    <rect x="62" y="54" width="120" height="148" rx="12" fill="#2B579A"/>
+    <rect x="80" y="88" width="84" height="12" rx="6" fill="#FFFFFF" opacity="0.85"/>
+    <rect x="80" y="112" width="84" height="12" rx="6" fill="#FFFFFF" opacity="0.6"/>
+    <rect x="80" y="136" width="56" height="12" rx="6" fill="#FFFFFF" opacity="0.45"/>
+  </g>
+  <!-- Excel card (front) -->
+  <g transform="rotate(7 128 132)">
+    <rect x="68" y="52" width="120" height="148" rx="12" fill="#1D7044"/>
+    <path d="M158 52 L188 82 L158 82 Z" fill="#0F5132"/>
+    <rect x="86" y="90" width="84" height="14" rx="3" fill="#E6F4EA"/>
+    <rect x="86" y="112" width="40" height="14" rx="3" fill="#E6F4EA"/>
+    <rect x="132" y="112" width="38" height="14" rx="3" fill="#E6F4EA"/>
+    <rect x="86" y="134" width="40" height="14" rx="3" fill="#E6F4EA" opacity="0.8"/>
+    <rect x="132" y="134" width="38" height="14" rx="3" fill="#E6F4EA" opacity="0.8"/>
+  </g>
+  <!-- Magnifier (read-only viewer) -->
+  <circle cx="176" cy="176" r="34" fill="none" stroke="#FFD166" stroke-width="12"/>
+  <line x1="200" y1="200" x2="226" y2="226" stroke="#FFD166" stroke-width="14" stroke-linecap="round"/>
+</svg>

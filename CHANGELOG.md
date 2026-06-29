@@ -1,0 +1,22 @@
+# 変更履歴 (Changelog)
+
+本ファイルは OpenXML Viewer の主要な変更点を記録します。
+フォーマットは [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
+バージョン番号は [Semantic Versioning](https://semver.org/lang/ja/) に従います。
+
+## [Unreleased]
+
+## [0.0.1] - 2026-06-29
+
+### Added
+
+- Excel ブック（`.xlsx`）の読み取り専用プレビュー（シート単位の表示・複数シートのタブ切り替え）。
+- Word 文書（`.docx`）の読み取り専用プレビュー（段落・見出し・表などの本文構造表示）。
+- PowerPoint プレゼンテーション（`.pptx`）の読み取り専用プレビュー（テキスト・図形・画像・サムネイル一覧）。
+- カスタムエディターによる自動プレビュー（`.xlsx` / `.docx` / `.pptx`）。
+- コマンド `OpenXML Viewer: Open Preview` / `OpenXML Viewer: Reload`。
+- 設定項目（最大描画行数・グリッド線・画像表示・サムネイル・配色テーマ）。
+- Content Security Policy（CSP）による安全なオフライン閲覧。
+
+[Unreleased]: https://github.com/tatsuya-midorikawa/openxml-viewer/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/tatsuya-midorikawa/openxml-viewer/releases/tag/v0.0.1

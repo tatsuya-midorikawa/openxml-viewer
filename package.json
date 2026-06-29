@@ -2,19 +2,38 @@
   "name": "openxml-viewer",
   "displayName": "OpenXML Viewer",
   "description": "Office Open XML (.xlsx / .docx / .pptx) を VS Code 上で直接プレビューする読み取り専用ビューアー。",
-  "version": "0.1.0",
-  "publisher": "tatsuya-midorikawa",
+  "version": "0.0.1",
+  "publisher": "tmidorikawa",
   "license": "MIT",
+  "icon": "media/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/tatsuya-midorikawa/openxml-viewer.git"
   },
+  "bugs": {
+    "url": "https://github.com/tatsuya-midorikawa/openxml-viewer/issues"
+  },
+  "homepage": "https://github.com/tatsuya-midorikawa/openxml-viewer#readme",
+  "qna": "marketplace",
   "engines": {
     "vscode": "^1.90.0"
   },
   "categories": [
     "Visualization",
     "Other"
+  ],
+  "keywords": [
+    "openxml",
+    "ooxml",
+    "office",
+    "xlsx",
+    "docx",
+    "pptx",
+    "viewer",
+    "preview",
+    "excel",
+    "word",
+    "powerpoint"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [],
@@ -103,7 +122,8 @@
     "build": "npm run fable && npm run bundle",
     "watch": "dotnet fable watch src --outDir build --test:MSBuildCracker",
     "clean": "dotnet fable clean src --outDir build --yes",
-    "package": "npm run build && vsce package"
+    "package": "npm run build && vsce package",
+    "publish": "npm run build && vsce publish"
   },
   "devDependencies": {
     "@types/vscode": "^1.90.0",

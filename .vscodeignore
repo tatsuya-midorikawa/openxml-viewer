@@ -16,3 +16,7 @@ node_modules/**
 *.log
 .gitignore
 .editorconfig
+package-lock.json
+DEVELOPMENT.md
+PUBLISHING.md
+media/icon.svg
