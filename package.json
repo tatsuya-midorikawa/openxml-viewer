@@ -1,8 +1,8 @@
 {
   "name": "openxml-viewer",
   "displayName": "OpenXML Viewer",
-  "description": "Office Open XML (.xlsx / .docx / .pptx) を VS Code 上で直接プレビューする読み取り専用ビューアー。",
-  "version": "0.0.4",
+  "description": "A read-only viewer that previews Office Open XML (.xlsx / .docx / .pptx) files directly in VS Code",
+  "version": "0.0.5",
   "publisher": "tmidorikawa",
   "license": "MIT",
   "icon": "media/icon.png",
