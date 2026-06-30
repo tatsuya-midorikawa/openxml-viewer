@@ -1,136 +1,137 @@
 # OpenXML Viewer
 
-Office Open XML 形式のファイル（`.xlsx` / `.docx` / `.pptx`）を **Visual Studio Code 上で直接プレビュー** するための拡張機能です。
-ファイルをダブルクリックするだけで、Excel・Word・PowerPoint を起動せずに中身を素早く確認できます。
+A Visual Studio Code extension that lets you **preview Office Open XML files (`.xlsx` / `.docx` / `.pptx`) directly inside Visual Studio Code**.
+Just double-click a file to quickly inspect its contents—without launching Excel, Word, or PowerPoint.
 
 > [!NOTE]
-> 本拡張機能は **閲覧（読み取り専用）** を目的としています。ファイルの編集・保存機能は提供しません。
+> This extension is intended for **viewing (read-only)**. It does not provide editing or saving capabilities.
 
 ---
 
-## 目次
+## Table of Contents
 
 - [OpenXML Viewer](#openxml-viewer)
-  - [目次](#目次)
-  - [主な機能](#主な機能)
-  - [対応ファイル形式](#対応ファイル形式)
-  - [動作要件](#動作要件)
-  - [インストール](#インストール)
-    - [Visual Studio Code Marketplace から](#visual-studio-code-marketplace-から)
-    - [VSIX ファイルから](#vsix-ファイルから)
-  - [使い方](#使い方)
-  - [コマンド](#コマンド)
-  - [設定](#設定)
-  - [制限事項](#制限事項)
-  - [ロードマップ](#ロードマップ)
-  - [コントリビュート](#コントリビュート)
-  - [ライセンス](#ライセンス)
+  - [Table of Contents](#table-of-contents)
+  - [Key Features](#key-features)
+  - [Supported File Formats](#supported-file-formats)
+  - [Requirements](#requirements)
+  - [Installation](#installation)
+    - [From the Visual Studio Code Marketplace](#from-the-visual-studio-code-marketplace)
+    - [From a VSIX File](#from-a-vsix-file)
+  - [Usage](#usage)
+  - [Commands](#commands)
+  - [Settings](#settings)
+  - [Limitations](#limitations)
+  - [Roadmap](#roadmap)
+  - [Contributing](#contributing)
+  - [Sponsors](#sponsors)
+  - [License](#license)
 
 ---
 
-## 主な機能
+## Key Features
 
-- 📊 **Excel ブック（`.xlsx`）の閲覧**
-  - シート単位でセル内容を表形式で表示
-  - 複数シートのタブ切り替え
-- 📝 **Word 文書（`.docx`）の閲覧**
-  - 段落・見出し・表などの本文構造を表示
-- 📑 **PowerPoint プレゼンテーション（`.pptx`）の閲覧**
-  - スライドごとのテキスト・図形・画像を表示
-  - スライド一覧（サムネイル）からのジャンプ
-- 🔍 **ビューアー内テキスト検索**
-  - 表示中の内容を全文検索し、一致箇所をハイライト
-  - 前後の一致へジャンプ（シート／スライドをまたいで移動）
-- 🖱️ **シームレスな操作**
-  - エクスプローラーでファイルを開くだけでプレビューを起動（カスタムエディター）
-  - 外部アプリケーションの起動が不要
-- 🔒 **安全な閲覧**
-  - 読み取り専用のため、誤編集による破損が発生しない
-  - Webview のコンテンツセキュリティポリシー（CSP）により外部リソース読み込みを制限
+- 📊 **View Excel workbooks (`.xlsx`)**
+  - Display cell contents in a table, sheet by sheet
+  - Switch between multiple sheets with tabs
+- 📝 **View Word documents (`.docx`)**
+  - Display body structure such as paragraphs, headings, and tables
+- 📑 **View PowerPoint presentations (`.pptx`)**
+  - Display text, shapes, and images for each slide
+  - Jump from the slide list (thumbnails)
+- 🔍 **In-viewer text search**
+  - Run a full-text search over the displayed content and highlight matches
+  - Jump to the previous/next match (moving across sheets and slides)
+- 🖱️ **Seamless operation**
+  - Launch the preview simply by opening a file in the Explorer (custom editor)
+  - No need to launch external applications
+- 🔒 **Safe viewing**
+  - Read-only, so accidental edits cannot corrupt the file
+  - The Webview's Content Security Policy (CSP) restricts loading external resources
 
 ---
 
-## 対応ファイル形式
+## Supported File Formats
 
-| 種類 | 拡張子 | 形式 | 対応状況 |
+| Type | Extension | Format | Status |
 | --- | --- | --- | --- |
-| Excel ブック | `.xlsx` | SpreadsheetML | ✅ 閲覧 |
-| Word 文書 | `.docx` | WordprocessingML | ✅ 閲覧 |
-| PowerPoint | `.pptx` | PresentationML | ✅ 閲覧 |
+| Excel workbook | `.xlsx` | SpreadsheetML | ✅ View |
+| Word document | `.docx` | WordprocessingML | ✅ View |
+| PowerPoint | `.pptx` | PresentationML | ✅ View |
 
 > [!IMPORTANT]
-> 対象は **Office Open XML（OOXML）形式** のファイルです。
-> 旧バイナリ形式（`.xls` / `.doc` / `.ppt`）やマクロ有効形式（`.xlsm` など）は対象外です。
+> The target is **Office Open XML (OOXML)** files.
+> Legacy binary formats (`.xls` / `.doc` / `.ppt`) and macro-enabled formats (such as `.xlsm`) are not supported.
 
 ---
 
-## 動作要件
+## Requirements
 
-- Visual Studio Code `1.90.0` 以降
-- 追加のランタイムや外部アプリケーション（Microsoft Office など）のインストールは **不要**
+- Visual Studio Code `1.90.0` or later
+- No additional runtime or external application (such as Microsoft Office) is **required**
 
 ---
 
-## インストール
+## Installation
 
-### Visual Studio Code Marketplace から
+### From the Visual Studio Code Marketplace
 
-1. VS Code のサイドバーから **拡張機能（Extensions）** ビューを開く（`Ctrl+Shift+X` / `⌘+Shift+X`）
-2. `OpenXML Viewer` を検索
-3. **Install** をクリック
+1. Open the **Extensions** view from the VS Code sidebar (`Ctrl+Shift+X` / `⌘+Shift+X`)
+2. Search for `OpenXML Viewer`
+3. Click **Install**
 
-### VSIX ファイルから
+### From a VSIX File
 
 ```bash
 code --install-extension openxml-viewer-<version>.vsix
 ```
 
-または、コマンドパレット（`Ctrl+Shift+P` / `⌘+Shift+P`）から
-**「Extensions: Install from VSIX...」** を実行し、`.vsix` ファイルを選択します。
+Alternatively, open the Command Palette (`Ctrl+Shift+P` / `⌘+Shift+P`), run
+**"Extensions: Install from VSIX..."**, and select the `.vsix` file.
 
 ---
 
-## 使い方
+## Usage
 
-1. VS Code のエクスプローラーで `.xlsx` / `.docx` / `.pptx` ファイルを開きます。
-2. 本拡張機能のカスタムエディターが自動的に起動し、内容がプレビュー表示されます。
-3. 既定のテキストエディターなどで開きたい場合は、ファイルを右クリックして
-   **「Open With...（アプリケーションを選択して開く）」** から開き方を切り替えられます。
+1. Open a `.xlsx` / `.docx` / `.pptx` file in the VS Code Explorer.
+2. This extension's custom editor launches automatically and shows a preview of the contents.
+3. If you want to open the file in the default text editor or another editor, right-click the file and switch the way it opens via
+   **"Open With..."**.
 
 > [!TIP]
-> 既定の開き方を変更したい場合は、**「Open With...」→「Configure default editor for '*.xlsx'...」** から
-> 拡張子ごとに既定エディターを設定できます。
+> If you want to change the default way a file opens, you can set the default editor per extension via
+> **"Open With..." → "Configure default editor for '*.xlsx'..."**.
 
-プレビュー上部の検索バーにキーワードを入力すると、表示中のドキュメントを全文検索できます。
-`Enter` / `Shift+Enter` で次 / 前の一致へ移動し、`Esc` で検索をクリアします。
-スプレッドシートやプレゼンテーションでは、一致するシート / スライドへ自動的に切り替わります。
+Type a keyword into the search bar at the top of the preview to run a full-text search over the displayed document.
+Press `Enter` / `Shift+Enter` to move to the next / previous match, and `Esc` to clear the search.
+For spreadsheets and presentations, the viewer automatically switches to the matching sheet / slide.
 
 ---
 
-## コマンド
+## Commands
 
-コマンドパレット（`Ctrl+Shift+P` / `⌘+Shift+P`）から利用できます。
+These are available from the Command Palette (`Ctrl+Shift+P` / `⌘+Shift+P`).
 
-| コマンド | コマンドID | 説明 |
+| Command | Command ID | Description |
 | --- | --- | --- |
-| OpenXML Viewer: Open Preview | `openxml-viewer.openPreview` | アクティブなファイルをプレビューで開く |
-| OpenXML Viewer: Reload | `openxml-viewer.reload` | 現在のプレビューを再読み込みする |
+| OpenXML Viewer: Open Preview | `openxml-viewer.openPreview` | Open the active file in the preview |
+| OpenXML Viewer: Reload | `openxml-viewer.reload` | Reload the current preview |
 
 ---
 
-## 設定
+## Settings
 
-`settings.json`（ユーザー設定 / ワークスペース設定）から構成できます。
+You can configure these in `settings.json` (user settings / workspace settings).
 
-| 設定キー | 型 | 既定値 | 説明 |
+| Setting Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `openxmlViewer.spreadsheet.maxRows` | `number` | `1000` | スプレッドシートで一度に描画する最大行数 |
-| `openxmlViewer.spreadsheet.showGridlines` | `boolean` | `true` | セルのグリッド線を表示するか |
-| `openxmlViewer.document.showImages` | `boolean` | `true` | Word 文書内の画像を表示するか |
-| `openxmlViewer.presentation.thumbnails` | `boolean` | `true` | スライドのサムネイル一覧を表示するか |
-| `openxmlViewer.theme` | `string` | `"auto"` | プレビューの配色（`auto` / `light` / `dark`） |
+| `openxmlViewer.spreadsheet.maxRows` | `number` | `1000` | Maximum number of rows rendered at once in a spreadsheet |
+| `openxmlViewer.spreadsheet.showGridlines` | `boolean` | `true` | Whether to show cell gridlines |
+| `openxmlViewer.document.showImages` | `boolean` | `true` | Whether to show images in Word documents |
+| `openxmlViewer.presentation.thumbnails` | `boolean` | `true` | Whether to show the slide thumbnail list |
+| `openxmlViewer.theme` | `string` | `"auto"` | Preview color scheme (`auto` / `light` / `dark`) |
 
-設定例:
+Example configuration:
 
 ```jsonc
 {
@@ -141,41 +142,48 @@ code --install-extension openxml-viewer-<version>.vsix
 
 ---
 
-## 制限事項
+## Limitations
 
 > [!WARNING]
-> 本拡張機能は **簡易的なプレビュー** を目的としています。Excel・Word・PowerPoint と完全に互換性のある描画を保証するものではありません。
-> 元の Office アプリケーションでの表示とは、レイアウト・書式・配色などが異なる場合があります。
+> This extension is intended to provide a **simple preview**. It does not guarantee rendering that is fully compatible with Excel, Word, or PowerPoint.
+> The layout, formatting, colors, and so on may differ from how the file appears in the original Office application.
 
-- 編集・保存・印刷には対応していません（閲覧専用）。
-- 複雑なレイアウト（高度な図形・SmartArt・グラフ・条件付き書式・マクロなど）は簡略化、または非表示となる場合があります。
-- パスワード保護・暗号化されたファイルは開けません。
-- 数式は計算結果のキャッシュ値を表示します（再計算は行いません）。
-- 旧バイナリ形式（`.xls` / `.doc` / `.ppt`）には対応していません。
-
----
-
-## ロードマップ
-
-- [x] `.xlsx` ビューアー（セル・複数シート）
-- [x] `.docx` ビューアー（本文・表・画像）
-- [x] `.pptx` ビューアー（スライド・サムネイル）
-- [x] ビューアー内テキスト検索（一致のハイライト・前後移動）
-- [ ] テキストのコピー対応
-- [ ] グラフ・図形の描画強化
-- [ ] エクスポート（PDF / HTML）
+- Editing, saving, and printing are not supported (view-only).
+- Complex layouts (advanced shapes, SmartArt, charts, conditional formatting, macros, and so on) may be simplified or hidden.
+- Password-protected or encrypted files cannot be opened.
+- Formulas display their cached result values (no recalculation is performed).
+- Legacy binary formats (`.xls` / `.doc` / `.ppt`) are not supported.
 
 ---
 
-## コントリビュート
+## Roadmap
 
-バグ報告・機能要望・プルリクエストを歓迎します。
-[Issues](https://github.com/tatsuya-midorikawa/openxml-viewer/issues) からお気軽にご連絡ください。
-
-仕様・設計やビルド／デバッグ手順は [DEVELOPMENT.md](./DEVELOPMENT.md)、Marketplace への公開は [PUBLISHING.md](./PUBLISHING.md) を参照してください。
+- [x] `.xlsx` viewer (cells, multiple sheets)
+- [x] `.docx` viewer (body, tables, images)
+- [x] `.pptx` viewer (slides, thumbnails)
+- [x] In-viewer text search (match highlighting, previous/next navigation)
+- [ ] Text copy support
+- [ ] Enhanced chart and shape rendering
+- [ ] Export (PDF / HTML)
 
 ---
 
-## ライセンス
+## Contributing
 
-本プロジェクトは [MIT License](./LICENSE) の下で公開されています。
+Bug reports, feature requests, and pull requests are welcome.
+Feel free to reach out via [Issues](https://github.com/tatsuya-midorikawa/openxml-viewer/issues).
+
+For specifications, design, and build/debug instructions, see [DEVELOPMENT.md](./DEVELOPMENT.md). For publishing to the Marketplace, see [PUBLISHING.md](./PUBLISHING.md).
+
+---
+
+## Sponsors
+
+If you would like to support the development of this project, contributions via [GitHub Sponsors](https://github.com/sponsors/tatsuya-midorikawa) are welcome.
+Your support will be used to improve features and maintain the project over time.
+
+---
+
+## License
+
+This project is released under the [MIT License](./LICENSE).
