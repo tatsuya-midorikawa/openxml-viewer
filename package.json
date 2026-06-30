@@ -2,7 +2,7 @@
   "name": "openxml-viewer",
   "displayName": "OpenXML Viewer",
   "description": "A read-only viewer that previews Office Open XML (.xlsx / .docx / .pptx) files directly in VS Code",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "tmidorikawa",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -15,6 +15,9 @@
   },
   "homepage": "https://github.com/tatsuya-midorikawa/openxml-viewer#readme",
   "qna": "marketplace",
+  "sponsor": {
+    "url": "https://github.com/sponsors/tatsuya-midorikawa"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },

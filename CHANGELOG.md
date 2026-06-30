@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-06-30
+
+### Changed
+
+- Marketplace 向けの拡張機能説明文（`description`）を英語表記へ変更。
+- `LICENSE` の著作権者表記を `tmidorikawa` に統一。
+
 ## [0.0.4] - 2026-06-30
 
 ### Added
@@ -36,7 +43,8 @@
 - 設定項目（最大描画行数・グリッド線・画像表示・サムネイル・配色テーマ）。
 - Content Security Policy（CSP）による安全なオフライン閲覧。
 
-[Unreleased]: https://github.com/tatsuya-midorikawa/openxml-viewer/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/tatsuya-midorikawa/openxml-viewer/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/tatsuya-midorikawa/openxml-viewer/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/tatsuya-midorikawa/openxml-viewer/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/tatsuya-midorikawa/openxml-viewer/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/tatsuya-midorikawa/openxml-viewer/compare/v0.0.1...v0.0.2
