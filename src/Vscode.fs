@@ -28,9 +28,15 @@ type WebviewPanel =
 type CustomDocument =
     abstract uri: Uri
 
+/// VS Code の Memento (キー値ストア)。列幅・行高の表示設定を保存する。
+type Memento =
+    abstract get: string -> obj
+    abstract update: string * obj -> JS.Promise<unit>
+
 type ExtensionContext =
     abstract subscriptions: ResizeArray<obj>
     abstract extensionUri: Uri
+    abstract workspaceState: Memento
 
 /// CustomReadonlyEditorProvider のうち本拡張で実装するメンバー。
 type CustomReadonlyEditorProvider =

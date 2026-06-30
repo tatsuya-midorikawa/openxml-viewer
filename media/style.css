@@ -257,6 +257,65 @@ table.grid th.corner {
   font-style: italic;
 }
 
+/* 行・列のリサイズハンドル (ヘッダー端に重ねる) */
+.col-resize-handle,
+.row-resize-handle {
+  position: absolute;
+  z-index: 5;
+  background-color: transparent;
+}
+
+.col-resize-handle {
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+}
+
+.row-resize-handle {
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 6px;
+  cursor: row-resize;
+}
+
+.col-resize-handle:hover,
+.row-resize-handle:hover {
+  background-color: var(--vscode-focusBorder, #007fd4);
+}
+
+/* ドラッグ中はテキスト選択を抑止し、カーソルを固定する */
+body.grid-resizing {
+  user-select: none;
+}
+
+body.col-resizing,
+body.col-resizing * {
+  cursor: col-resize !important;
+}
+
+body.row-resizing,
+body.row-resizing * {
+  cursor: row-resize !important;
+}
+
+.sheet-reset {
+  margin-left: auto;
+  border: 1px solid var(--vscode-button-border, transparent);
+  padding: 2px 10px;
+  cursor: pointer;
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  background-color: var(--vscode-button-secondaryBackground, transparent);
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+
+.sheet-reset:hover {
+  background-color: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground));
+}
+
 /* ---------------- 文書 (Word) ---------------- */
 .document {
   overflow: auto;

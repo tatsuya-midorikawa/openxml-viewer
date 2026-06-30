@@ -46,8 +46,18 @@ let private buildHtml (webview: Vscode.Webview) (nonce: string) (scriptUri: stri
         nonce
         scriptUri
 
+/// Webview から届く列幅・行高の保存メッセージ。
+type private SizeMessage =
+    abstract ``type``: string
+    abstract overrides: obj
+
+/// ドキュメントごとのサイズ保存キー。
+let private sizesKey (uri: Vscode.Uri) : string =
+    "openxml-viewer.spreadsheet.sizes:" + Vscode.uriToString uri
+
 /// カスタムエディターを解決し、Webview をセットアップして解析結果を送信する。
-let private render (extensionUri: Vscode.Uri) (kind: string) (document: Vscode.CustomDocument) (panel: Vscode.WebviewPanel) =
+let private render (context: Vscode.ExtensionContext) (kind: string) (document: Vscode.CustomDocument) (panel: Vscode.WebviewPanel) =
+    let extensionUri = context.extensionUri
     let webview = panel.webview
     webview.options <- createObj [ "enableScripts" ==> true; "localResourceRoots" ==> [| extensionUri |] ]
 
@@ -56,20 +66,27 @@ let private render (extensionUri: Vscode.Uri) (kind: string) (document: Vscode.C
     let styleUri = Vscode.uriToString (webview.asWebviewUri (Vscode.joinPath extensionUri [ "media"; "style.css" ]))
     webview.html <- buildHtml webview nonce scriptUri styleUri
 
+    if kind = "spreadsheet" then
+        webview.onDidReceiveMessage (fun message ->
+            let payload: SizeMessage = unbox message
+            if payload.``type`` = "saveSpreadsheetSizes" then
+                context.workspaceState.update (sizesKey document.uri, payload.overrides) |> ignore)
+        |> ignore
+
     Vscode.readFile document.uri
     |> Vscode.thenDo (fun (bytes: byte[]) ->
         let payload = parsePayload kind bytes
+        if kind = "spreadsheet" then
+            payload?savedSizes <- context.workspaceState.get (sizesKey document.uri)
         webview.postMessage (createObj [ "type" ==> "render"; "payload" ==> payload ]) |> ignore)
 
 /// 拡張機能の有効化。
 let activate (context: Vscode.ExtensionContext) : unit =
-    let extensionUri = context.extensionUri
-
     let registerViewer (viewType: string) (kind: string) =
         let provider =
             { new Vscode.CustomReadonlyEditorProvider with
                 member _.openCustomDocument(uri, _openContext, _token) = Vscode.makeDocument uri
-                member _.resolveCustomEditor(document, panel, _token) = render extensionUri kind document panel }
+                member _.resolveCustomEditor(document, panel, _token) = render context kind document panel }
         context.subscriptions.Add(Vscode.registerCustomEditorProvider viewType provider true)
 
     registerViewer "openxml-viewer.spreadsheet" "spreadsheet"

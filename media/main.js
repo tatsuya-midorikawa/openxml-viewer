@@ -6,6 +6,9 @@
 
   const app = document.getElementById("app");
 
+  // VS Code Webview API (列幅・行高の保存に使用)。取得は一度きり。
+  const vscodeApi = (typeof acquireVsCodeApi === "function") ? acquireVsCodeApi() : null;
+
   /** 0 始まりの列番号を Excel 風の列名 (A, B, ... Z, AA ...) へ変換する。 */
   function colLetter(n) {
     let s = "";
@@ -286,6 +289,10 @@
   const CELL_TEXT_PADDING = 6;
   const TRAILING_BLANK_COLUMNS = 20;
   const SHEET_ROW_LIMIT = 2000;
+  const MIN_COL_WIDTH_PX = 16;
+  const MIN_ROW_HEIGHT_PX = 12;
+  const AUTO_FIT_MAX_COL_WIDTH_PX = 600;
+  const AUTO_FIT_MAX_ROW_HEIGHT_PX = 400;
   const PPT_EMU_PER_INCH = 914400;
   const PPT_EXPORT_DPI = 81;
   const PPT_EMU_PER_PIXEL = PPT_EMU_PER_INCH / PPT_EXPORT_DPI;
@@ -317,11 +324,14 @@
     return rowHeightToPx(row && row.height > 0 ? row.height : (sheet.defaultRowHeight || DEFAULT_ROW_HEIGHT));
   }
 
-  function buildSheetMetrics(sheet, maxCol, maxRow, rowByIndex) {
+  function buildSheetMetrics(sheet, maxCol, maxRow, rowByIndex, overrides) {
+    const colOverrides = (overrides && overrides.columns) || {};
+    const rowOverrides = (overrides && overrides.rows) || {};
     const colWidths = [];
     const colOffsets = [0];
     for (let c = 0; c <= maxCol; c++) {
-      const width = columnWidth(sheet, c);
+      const override = colOverrides[c];
+      const width = (typeof override === "number" && override > 0) ? override : columnWidth(sheet, c);
       colWidths.push(width);
       colOffsets.push(colOffsets[c] + width);
     }
@@ -329,7 +339,8 @@
     const rowHeights = [];
     const rowOffsets = [0];
     for (let r = 1; r <= maxRow; r++) {
-      const height = rowHeight(sheet, r, rowByIndex);
+      const override = rowOverrides[r];
+      const height = (typeof override === "number" && override > 0) ? override : rowHeight(sheet, r, rowByIndex);
       rowHeights.push(height);
       rowOffsets.push(rowOffsets[r - 1] + height);
     }
@@ -379,6 +390,164 @@
     return Math.max(1, metrics.colOffsets[stopCol] - metrics.colOffsets[col] - CELL_TEXT_PADDING);
   }
 
+  // ---- リサイズ (列幅・行高の手動調整) -------------------------------------
+
+  // 文字幅測定用の隠し span (自動調整で使用)。
+  let measureEl = null;
+  function measureCellText(value) {
+    if (!measureEl) {
+      measureEl = document.createElement("span");
+      measureEl.setAttribute("aria-hidden", "true");
+      measureEl.style.position = "absolute";
+      measureEl.style.left = "-9999px";
+      measureEl.style.top = "0";
+      measureEl.style.visibility = "hidden";
+      measureEl.style.whiteSpace = "nowrap";
+      measureEl.style.display = "inline-block";
+      measureEl.style.pointerEvents = "none";
+      document.body.appendChild(measureEl);
+    }
+    measureEl.textContent = String(value === undefined || value === null ? "" : value);
+    return measureEl.getBoundingClientRect().width;
+  }
+
+  // ドラッグ中の軽量更新: 対象の列だけ幅を変え、表とキャンバスの総幅を更新する。
+  function liveResizeColumn(state, colIndex, newWidth) {
+    const colEl = state.colEls[colIndex];
+    if (!colEl) return;
+    const delta = newWidth - state.colWidths[colIndex];
+    if (delta === 0) return;
+    state.colWidths[colIndex] = newWidth;
+    colEl.style.width = px(newWidth);
+    state.totalWidth += delta;
+    if (state.table) state.table.style.width = px(state.totalWidth);
+    if (state.canvas) state.canvas.style.width = px(state.totalWidth);
+  }
+
+  // ドラッグ中の軽量更新: 対象の行だけ高さを変え、キャンバスの総高を更新する。
+  function liveResizeRow(state, rowNumber, newHeight) {
+    const trEl = state.rowEls[rowNumber];
+    if (!trEl) return;
+    const delta = newHeight - state.rowHeights[rowNumber - 1];
+    if (delta === 0) return;
+    state.rowHeights[rowNumber - 1] = newHeight;
+    trEl.style.height = px(newHeight);
+    state.totalHeight += delta;
+    if (state.canvas) state.canvas.style.height = px(state.totalHeight);
+  }
+
+  function makeColResizeHandle(colIndex, controller, sheetIndex, state) {
+    const handle = el("div", "col-resize-handle");
+    handle.title = "ドラッグで列幅を変更 / ダブルクリックで自動調整";
+    handle.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const startX = event.clientX;
+      const startWidth = state.colWidths[colIndex];
+      let moved = false;
+      try { handle.setPointerCapture(event.pointerId); } catch (_) {}
+      document.body.classList.add("grid-resizing", "col-resizing");
+      const onMove = (ev) => {
+        moved = true;
+        liveResizeColumn(state, colIndex, Math.max(MIN_COL_WIDTH_PX, startWidth + (ev.clientX - startX)));
+      };
+      const onUp = (ev) => {
+        handle.removeEventListener("pointermove", onMove);
+        handle.removeEventListener("pointerup", onUp);
+        handle.removeEventListener("pointercancel", onUp);
+        try { handle.releasePointerCapture(event.pointerId); } catch (_) {}
+        document.body.classList.remove("grid-resizing", "col-resizing");
+        if (!moved) return;
+        const width = Math.max(MIN_COL_WIDTH_PX, startWidth + (ev.clientX - startX));
+        controller.setColumnWidth(sheetIndex, colIndex, width);
+        controller.rebuildActiveSheet();
+        controller.persist();
+      };
+      handle.addEventListener("pointermove", onMove);
+      handle.addEventListener("pointerup", onUp);
+      handle.addEventListener("pointercancel", onUp);
+    });
+    handle.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      controller.autoFitColumn(sheetIndex, colIndex);
+    });
+    return handle;
+  }
+
+  function makeRowResizeHandle(rowNumber, controller, sheetIndex, state) {
+    const handle = el("div", "row-resize-handle");
+    handle.title = "ドラッグで行高を変更 / ダブルクリックで自動調整";
+    handle.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const startY = event.clientY;
+      const startHeight = state.rowHeights[rowNumber - 1];
+      let moved = false;
+      try { handle.setPointerCapture(event.pointerId); } catch (_) {}
+      document.body.classList.add("grid-resizing", "row-resizing");
+      const onMove = (ev) => {
+        moved = true;
+        liveResizeRow(state, rowNumber, Math.max(MIN_ROW_HEIGHT_PX, startHeight + (ev.clientY - startY)));
+      };
+      const onUp = (ev) => {
+        handle.removeEventListener("pointermove", onMove);
+        handle.removeEventListener("pointerup", onUp);
+        handle.removeEventListener("pointercancel", onUp);
+        try { handle.releasePointerCapture(event.pointerId); } catch (_) {}
+        document.body.classList.remove("grid-resizing", "row-resizing");
+        if (!moved) return;
+        const height = Math.max(MIN_ROW_HEIGHT_PX, startHeight + (ev.clientY - startY));
+        controller.setRowHeight(sheetIndex, rowNumber, height);
+        controller.rebuildActiveSheet();
+        controller.persist();
+      };
+      handle.addEventListener("pointermove", onMove);
+      handle.addEventListener("pointerup", onUp);
+      handle.addEventListener("pointercancel", onUp);
+    });
+    handle.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      controller.autoFitRow(sheetIndex, rowNumber);
+    });
+    return handle;
+  }
+
+  // 列の自動調整: 表示対象セルの最長テキスト幅へ合わせる。
+  function autoFitColumn(controller, sheetIndex, col) {
+    const sheet = controller.sheets[sheetIndex];
+    const rows = sheet.rows || [];
+    let maxWidth = MIN_COL_WIDTH_PX;
+    for (const row of rows) {
+      if (!row || row.index > SHEET_ROW_LIMIT) continue;
+      for (const cell of (row.cells || [])) {
+        if (cell.col !== col || !hasCellText(cell)) continue;
+        const width = Math.ceil(measureCellText(cell.text)) + 2 * CELL_TEXT_PADDING + 2;
+        if (width > maxWidth) maxWidth = width;
+      }
+    }
+    controller.setColumnWidth(sheetIndex, col, Math.min(maxWidth, AUTO_FIT_MAX_COL_WIDTH_PX));
+    controller.rebuildActiveSheet();
+    controller.persist();
+  }
+
+  // 行の自動調整: 現在の列幅で描画済みセルの内容高さへ合わせる。
+  function autoFitRow(controller, sheetIndex, rowNumber) {
+    const state = controller.resizeState;
+    let maxHeight = MIN_ROW_HEIGHT_PX;
+    if (state && state.rowEls[rowNumber]) {
+      const nodes = state.rowEls[rowNumber].querySelectorAll(".cell-text");
+      for (const node of nodes) {
+        const height = node.scrollHeight + 6;
+        if (height > maxHeight) maxHeight = height;
+      }
+    }
+    controller.setRowHeight(sheetIndex, rowNumber, Math.min(maxHeight, AUTO_FIT_MAX_ROW_HEIGHT_PX));
+    controller.rebuildActiveSheet();
+    controller.persist();
+  }
+
   function renderSpreadsheet(data) {
     clear(app);
     app.className = "spreadsheet";
@@ -393,16 +562,65 @@
     const tabs = el("div", "tabs");
     const body = el("div", "sheet-body");
 
-    let activeSheet = -1;
+    // シート単位の表示上のサイズ上書き (px)。元ファイルは変更しない。
+    const controller = {
+      sheets,
+      body,
+      activeIndex: -1,
+      resizeState: null,
+      sizeOverrides: (data.savedSizes && typeof data.savedSizes === "object") ? data.savedSizes : {},
+      sheetKey(index) {
+        const sheet = sheets[index];
+        return `${index}:${sheet ? sheet.name : ""}`;
+      },
+      peekOverrides(index) {
+        return this.sizeOverrides[this.sheetKey(index)] || null;
+      },
+      overridesFor(index) {
+        const key = this.sheetKey(index);
+        let entry = this.sizeOverrides[key];
+        if (!entry) {
+          entry = { columns: {}, rows: {} };
+          this.sizeOverrides[key] = entry;
+        }
+        if (!entry.columns) entry.columns = {};
+        if (!entry.rows) entry.rows = {};
+        return entry;
+      },
+      setColumnWidth(index, col, width) {
+        this.overridesFor(index).columns[col] = width;
+      },
+      setRowHeight(index, rowNumber, height) {
+        this.overridesFor(index).rows[rowNumber] = height;
+      },
+      clearSheet(index) {
+        delete this.sizeOverrides[this.sheetKey(index)];
+      },
+      rebuildActiveSheet() {
+        if (this.activeIndex < 0) return;
+        clear(this.body);
+        this.body.appendChild(buildSheetTable(sheets[this.activeIndex], this.activeIndex, this));
+        search.applyHighlights();
+      },
+      persist() {
+        if (!vscodeApi) return;
+        vscodeApi.postMessage({ type: "saveSpreadsheetSizes", overrides: this.sizeOverrides });
+      },
+      autoFitColumn(index, col) {
+        autoFitColumn(this, index, col);
+      },
+      autoFitRow(index, rowNumber) {
+        autoFitRow(this, index, rowNumber);
+      },
+    };
+
     function showSheet(index) {
-      if (index === activeSheet) return;
-      activeSheet = index;
-      Array.from(tabs.children).forEach((t, i) =>
-        t.classList.toggle("active", i === index)
+      if (index === controller.activeIndex) return;
+      controller.activeIndex = index;
+      Array.from(tabs.querySelectorAll(".tab")).forEach((tab, i) =>
+        tab.classList.toggle("active", i === index)
       );
-      clear(body);
-      body.appendChild(buildSheetTable(sheets[index], index));
-      search.applyHighlights();
+      controller.rebuildActiveSheet();
     }
 
     sheets.forEach((sheet, i) => {
@@ -410,6 +628,17 @@
       tab.addEventListener("click", () => showSheet(i));
       tabs.appendChild(tab);
     });
+
+    const resetButton = el("button", "sheet-reset", "サイズをリセット");
+    resetButton.type = "button";
+    resetButton.title = "現在のシートの列幅・行高を元に戻す";
+    resetButton.addEventListener("click", () => {
+      if (controller.activeIndex < 0) return;
+      controller.clearSheet(controller.activeIndex);
+      controller.rebuildActiveSheet();
+      controller.persist();
+    });
+    tabs.appendChild(resetButton);
 
     app.appendChild(makeSearchBar());
     app.appendChild(body);
@@ -419,7 +648,7 @@
     showSheet(0);
   }
 
-  function buildSheetTable(sheet, sheetIndex) {
+  function buildSheetTable(sheet, sheetIndex, controller) {
     const rows = sheet.rows || [];
     const images = sheet.images || [];
     const contentMaxCol = Math.max(sheet.maxCol || 0, ...images.map((image) => Math.max(image.col || 0, image.toCol || 0)));
@@ -433,21 +662,36 @@
     const maxImageRow = images.reduce((max, image) => Math.max(max, (image.row || 0) + 1, (image.toRow || 0) + 1), 0);
     const maxRow = Math.max(maxDataRow, maxImageRow, 1);
     const limit = Math.min(maxRow, SHEET_ROW_LIMIT);
-    const metrics = buildSheetMetrics(sheet, maxCol, limit, rowByIndex);
+    const overrides = controller ? controller.peekOverrides(sheetIndex) : null;
+    const metrics = buildSheetMetrics(sheet, maxCol, limit, rowByIndex, overrides);
     const sheetWidth = ROW_HEADER_WIDTH + metrics.colOffsets[metrics.colOffsets.length - 1];
     const sheetHeight = COLUMN_HEADER_HEIGHT + metrics.rowOffsets[metrics.rowOffsets.length - 1];
 
+    const resizeState = {
+      table: null,
+      canvas: null,
+      colEls: [],
+      rowEls: {},
+      colWidths: metrics.colWidths,
+      rowHeights: metrics.rowHeights,
+      totalWidth: sheetWidth,
+      totalHeight: sheetHeight,
+    };
+    if (controller) controller.resizeState = resizeState;
+
     const table = el("table", "grid");
+    resizeState.table = table;
     table.classList.toggle("hide-gridlines", sheet.showGridLines === false);
     table.style.width = px(sheetWidth);
     const colgroup = el("colgroup");
     const rowHeaderCol = el("col");
     rowHeaderCol.style.width = px(ROW_HEADER_WIDTH);
     colgroup.appendChild(rowHeaderCol);
-    metrics.colWidths.forEach((width) => {
+    metrics.colWidths.forEach((width, colIndex) => {
       const col = el("col");
       col.style.width = px(width);
       colgroup.appendChild(col);
+      resizeState.colEls[colIndex] = col;
     });
     table.appendChild(colgroup);
 
@@ -456,7 +700,9 @@
     headRow.style.height = px(COLUMN_HEADER_HEIGHT);
     headRow.appendChild(el("th", "corner", ""));
     for (let c = 0; c <= maxCol; c++) {
-      headRow.appendChild(el("th", "col-head", colLetter(c)));
+      const th = el("th", "col-head", colLetter(c));
+      if (controller) th.appendChild(makeColResizeHandle(c, controller, sheetIndex, resizeState));
+      headRow.appendChild(th);
     }
     thead.appendChild(headRow);
     table.appendChild(thead);
@@ -466,7 +712,10 @@
       const row = rowByIndex[rowNumber] || { index: rowNumber, cells: [] };
       const tr = el("tr");
       tr.style.height = px(metrics.rowHeights[rowNumber - 1]);
-      tr.appendChild(el("th", "row-head", String(row.index)));
+      resizeState.rowEls[rowNumber] = tr;
+      const rowHead = el("th", "row-head", String(row.index));
+      if (controller) rowHead.appendChild(makeRowResizeHandle(rowNumber, controller, sheetIndex, resizeState));
+      tr.appendChild(rowHead);
       const cellByCol = {};
       const occupiedCols = [];
       (row.cells || []).forEach((cell) => {
@@ -516,6 +765,7 @@
 
     const wrap = el("div", "table-wrap");
     const canvas = el("div", "sheet-canvas");
+    resizeState.canvas = canvas;
     canvas.style.width = px(sheetWidth);
     canvas.style.height = px(sheetHeight);
     canvas.appendChild(table);
