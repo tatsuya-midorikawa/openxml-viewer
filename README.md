@@ -34,6 +34,7 @@ Just double-click a file to quickly inspect its contents—without launching Exc
 - 📊 **View Excel workbooks (`.xlsx`)**
   - Display cell contents in a table, sheet by sheet
   - Switch between multiple sheets with tabs
+  - Resize column widths and row heights (drag borders, double-click to auto-fit, reset per sheet); adjustments persist across reopen
 - 📝 **View Word documents (`.docx`)**
   - Display body structure such as paragraphs, headings, and tables
 - 📑 **View PowerPoint presentations (`.pptx`)**
@@ -162,6 +163,7 @@ Example configuration:
 - [x] `.docx` viewer (body, tables, images)
 - [x] `.pptx` viewer (slides, thumbnails)
 - [x] In-viewer text search (match highlighting, previous/next navigation)
+- [x] Resizable spreadsheet column widths and row heights (drag, auto-fit, persistence)
 - [ ] Text copy support
 - [ ] Enhanced chart and shape rendering
 - [ ] Export (PDF / HTML)

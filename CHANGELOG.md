@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-06-30
+
+### Added
+
+- スプレッドシート（`.xlsx`）の行高・列幅の調整機能。列・行ヘッダーの境界をドラッグしてサイズを変更でき、境界のダブルクリックで内容に合わせた自動調整、ボタンによるシート単位のリセットに対応。調整したサイズはファイルを再度開いても保持されます（読み取り専用のため、元のファイルは変更しません）。
+
+## [0.0.3] - 2026-06-29
+
 ### Added
 
 - ビューアー内テキスト検索機能。`.xlsx` / `.docx` / `.pptx` の表示中の内容を全文検索し、一致箇所のハイライトと前後移動に対応（シート／スライドをまたいだ移動を含む）。
@@ -28,6 +36,8 @@
 - 設定項目（最大描画行数・グリッド線・画像表示・サムネイル・配色テーマ）。
 - Content Security Policy（CSP）による安全なオフライン閲覧。
 
-[Unreleased]: https://github.com/tatsuya-midorikawa/openxml-viewer/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/tatsuya-midorikawa/openxml-viewer/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/tatsuya-midorikawa/openxml-viewer/compare/v0.0.3...v0.0.4
+[0.0.3]: https://github.com/tatsuya-midorikawa/openxml-viewer/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/tatsuya-midorikawa/openxml-viewer/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/tatsuya-midorikawa/openxml-viewer/releases/tag/v0.0.1
